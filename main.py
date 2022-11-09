@@ -1,16 +1,47 @@
-# 这是一个示例 Python 脚本。
+import logging
+import os
 
-# 按 Shift+F10 执行或将其替换为您的代码。
-# 按 双击 Shift 在所有地方搜索类、文件、工具窗口、操作和设置。
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+
+tgbot_token = ""
+debug = True
+master_id = 0
+channel_report = 0
+channel_sleep = 0
+
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
 
 
-def print_hi(name):
-    # 在下面的代码行中使用断点来调试脚本。
-    print(f'Hi, {name}')  # 按 Ctrl+F8 切换断点。
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm Rachel.")
 
 
-# 按间距中的绿色按钮以运行脚本。
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="I'm Rachel.",
+        reply_to_message_id=update.message.id,
+    )
+
+
+def main():
+    # 读取环境变量
+    global tgbot_token, debug, master_id, channel_report, channel_sleep
+    tgbot_token = os.getenv("TGBOT_TOKEN")
+    debug = os.getenv("DEBUG").lower() == "true"
+    master_id = int(os.getenv("MASTER_ID"))
+    channel_report = int(os.getenv("CHANNEL_REPORT"))
+    channel_sleep = int(os.getenv("CHANNEL_SLEEP"))
+
+    application = ApplicationBuilder().token(tgbot_token).build()
+    start_handler = CommandHandler('start', start)
+    start_handler = CommandHandler('echo', echo)
+    application.add_handler(start_handler)
+    application.run_polling()
+
+
 if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# 访问 https://www.jetbrains.com/help/pycharm/ 获取 PyCharm 帮助
+    main()
