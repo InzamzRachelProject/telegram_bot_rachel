@@ -1,0 +1,16 @@
+{
+  "name": "telegram_bot_rachel",
+  "version": "0.0.1",
+  "main": "index.js",
+  "repository": "git@github.com:InzamzRachelProject/telegram_bot_rachel.git",
+  "author": "Misaka19614 <inzamzheng@icloud.com>",
+  "license": "MIT",
+  "dependencies": {
+    "got": "^13.0.0",
+    "mastodon-api": "^1.3.0",
+    "needle": "^3.2.0",
+    "node-telegram-bot-api": "^0.61.0",
+    "oauth-1.0a": "^2.2.6",
+    "winston": "^3.10.0"
+  }
+}
