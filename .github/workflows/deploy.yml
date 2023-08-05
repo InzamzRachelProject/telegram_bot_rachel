@@ -23,4 +23,4 @@ jobs:
           export MASTODON_ACCESS_TOKEN= ${{ secrets.MASTODON_ACCESS_TOKEN }};
           export TELEGRAM_CHANNEL_ID= ${{ secrets.TELEGRAM_CHANNEL_ID }};
           kill -9 `ps -ef | grep "nodemon app.js" | grep -v grep | awk '{print $2}'`;
-          nohup yarn nodemon app.js > logs/logs 2>&1 &
+          nohup yarn nodemon app.js </dev/null >> logs/logs.txt 2>&1 &
