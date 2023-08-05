@@ -1,11 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { logger } from '../logger.js';
 
-let commandDist = {
-    '/echo': echo,
-    '/log': listen,
-}
-
 function listen(bot) {
     simpleLog(bot, 'message', logger.info);
     simpleLog(bot, 'edited_message', logger.info);
@@ -26,24 +21,16 @@ export function start(bot){
     "
     logger.info(welcome_log);
     logger.info('[TELEGRAM_BOT] start');
-    registerCommandList(bot);
+    registerCommand(bot);
     listen(bot);
 }
 
-function registerCommand(bot, command, callback) {
-    bot.onText(command, (msg, match) => {
-        const chatId = msg.chat.id;
-        callback(chatId, match);
-    });
+function registerCommand(bot) {
+    echoRegiser(bot);
 }
 
-function registerCommandList(bot){
-    for (const command in commandDist) {
-        registerCommand(bot, command, commandDist[command]);
-    }
-}
 
-function echo(bot){
+function echoRegiser(bot){
     bot.onText(/\/echo (.+)/, (msg, match) => {
         const chatId = msg.chat.id;
         const resp = match[1];
@@ -54,7 +41,7 @@ function echo(bot){
 
 function simpleLog(bot, msgType, logFunc){
     bot.on(msgType, (msg) => {
-        logFunc("[${msgType}] " + JSON.stringify(msg, null, 2));
+        logFunc(`[${msgType}]` + JSON.stringify(msg, null, 2));
     });
 }
 
