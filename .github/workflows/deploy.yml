@@ -13,9 +13,8 @@ jobs:
         password: ${{ secrets.PASSWORD }}
         port: ${{ secrets.PORT }}
         script: |
-          cd /root/telegram-bot-rachel;
+          cd /${{ secrets.USERNAME }}/telegram_bot_rachel;
           git pull -f;
-          source /root/.nvm/nvm.sh;
           nvm install 16;
           nvm use 16;
           yarn install;
