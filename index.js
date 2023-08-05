@@ -1,25 +1,32 @@
-const TelegramBot = require('node-telegram-bot-api');
+import got from 'got';
+import TelegramBot from 'node-telegram-bot-api';
+import { logger } from './src/logger.js';
+import { start } from './src/tgbot/listening.js';
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
+const channelId = process.env.TELEGRAM_CHANNEL_ID;
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
-const bot = new TelegramBot(token, {polling: true});
+start(bot);
 
-logger = require('winston');
-
-// Matches "/echo [whatever]"
-bot.onText(/\/echo (.+)/, (msg, match) => {
-
-  const chatId = msg.chat.id;
-  const resp = match[1]; // the captured "whatever"
-
-  // send back the matched "whatever" to the chat
-  bot.sendMessage(chatId, resp);
-});
-
-// Listen for any kind of message. There are different kinds of
-// messages.
-bot.on('message', (msg) => {
-  const chatId = msg.chat.id;
-  logger.debug(msg, chatId);
-
+got('https://m.cmx.im/api/v1/accounts/109261092826441759/statuses?limit=1', {
+    headers: {
+        Authorization: `Bearer ${process.env.MASTODON_ACCESS_TOKEN}`,
+    },
+}).then((response) => {
+    // json 序列化
+    if (response.statusCode !== 200) {
+        logger.error('[GET_MASTODON_STATUS]', response.body);
+        return;
+    }
+    logger.info('[GET_MASTODON_STATUS] success');
+    logger.debug(`[GET_MASTODON_STATUS] ${response.body}`);
+    const statuses = JSON.parse(response.body);
+    for (const status of statuses) {
+        logger.debug('[GET_MASTODON_STATUS]', status);
+        // send message to the channel
+        // bot.sendMessage(channelId, status.content);
+        // logger.info(`[TELEGRAM_BOT] send message [${status.content}] to [${channelId}]`);
+    }
+}).catch((error) => {
+    logger.error(`[GET_MASTODON_STATUS] ${error}`);
 });
