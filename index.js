@@ -1,7 +1,7 @@
 import got from 'got';
 import TelegramBot from 'node-telegram-bot-api';
 import { logger } from './src/logger.js';
-import { start } from './src/tgbot/listening.js';
+import { start } from './src/tgbot/init.js';
 
 const channelId = process.env.TELEGRAM_CHANNEL_ID;
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
