@@ -54,7 +54,7 @@ function echo(bot){
 
 function simpleLog(bot, msgType, logFunc){
     bot.on(msgType, (msg) => {
-        logFunc(`[${msgType}] ${msg}`);
+        logFunc("[${msgType}] " + JSON.stringify(msg, null, 2));
     });
 }
 
