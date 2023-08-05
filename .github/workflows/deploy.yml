@@ -18,8 +18,9 @@ jobs:
           source /root/.nvm/nvm.sh;
           nvm install 16;
           nvm use 16;
-          npm install;
+          yarn install;
           export TELEGRAM_BOT_TOKEN= ${{ secrets.TELEGRAM_BOT_TOKEN }};
           export MASTODON_ACCESS_TOKEN= ${{ secrets.MASTODON_ACCESS_TOKEN }};
           export TELEGRAM_CHANNEL_ID= ${{ secrets.TELEGRAM_CHANNEL_ID }};
-          nohup nodemon app.js > logs/logs 2>&1 &
+          kill -9 `ps -ef | grep "nodemon app.js" | grep -v grep | awk '{print $2}'`;
+          nohup yarn nodemon app.js > logs/logs 2>&1 &
