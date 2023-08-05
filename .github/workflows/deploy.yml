@@ -15,6 +15,7 @@ jobs:
         script: |
           cd /${{ secrets.USERNAME }}/telegram_bot_rachel;
           git pull -f;
+          source /${{ secrets.USERNAME }}/.nvm/nvm.sh;
           nvm install 16;
           nvm use 16;
           yarn install;
