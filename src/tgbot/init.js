@@ -3,11 +3,15 @@ import { logger } from '../logger.js';
 import { listeningLog } from './listening.js';
 import { echoRegiser } from './echo.js';
 
-export const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
+export const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
+    polling: true,
+    });
+
+export const simpleBot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
 
 function registerCommand(bot) {
     echoRegiser(bot);
-    logger.info('[TELEGRAM_BOT] register command [echo]');
+    logger.info('[TelegramBot] register command [echo]');
 }
 
 export function start(bot) {

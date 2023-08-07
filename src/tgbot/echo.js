@@ -5,6 +5,6 @@ export function echoRegiser(bot){
         const chatId = msg.chat.id;
         const resp = match[1];
         bot.sendMessage(chatId, resp);
-        logger.info(`[TELEGRAM_BOT] send message [${resp}] to [${chatId}]`);
+        logger.info(`[TelegarmBot] send message [${resp}] to [${chatId}]`);
     });
 }
