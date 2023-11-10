@@ -2,6 +2,8 @@
 
 ## Before All
 
+回归本心了，最近尝试了腾讯云的 scf，发现延迟完全可以接受，使用 `webhook` 监控信息进行回复。而且不需要担心客户端程序出错重启，每次都启动一个新函数实例，稳定性和费用都有所减少。
+
 这是我的第二个电报机器人尝试，这一切的契机源自接触了 Serverless ，其中的函数计算和工作流的运作方式让我觉得我的机器人可以进行改造（~~从节约成本角度来说，机器人的工作量并不大，但是需要安装客户端翻墙或者购买墙外服务器，开销大一点。而且单独挂一个机器人有点浪费资源~~）。
 
 Telegram 提供了 Webhook 订阅，~~于是计划将机器人打造成通过 Webhook 响应的一系列云函数~~。选用的语言也是我一直很想尝试的 Go ，也是从零开始学习 Go 的一次学习。
@@ -21,12 +23,12 @@ English Version will update later...
 
 ## TODO
 
-- [ ] 重构代码
+- [x] 重构代码
 - [x] Echo
-- [x] OjContestCanlanderWithLark
+- [ ] OjContestCanlanderWithLark
 - [ ] OjContestCanlanderWithGoogle
 - [ ] AppleBooksNoteExport
 - [ ] EveryDayMSG
 - [ ] Fitness Summary
 - [ ] Codeforces PeekingTom
-- [ ] Trans to Webhook Mode
+- [x] Trans to Webhook Mode
