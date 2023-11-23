@@ -1,0 +1,4 @@
+
+pyTelegramBotAPI==4.14.0
+pymongo[srv]
+requests==2.26.0
