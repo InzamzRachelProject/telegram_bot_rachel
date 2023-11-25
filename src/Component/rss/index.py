@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET  # 用于解析 XML
 from pymongo import MongoClient
 from typing import Union
 
+
 def main_handler(event: Union[None, dict], context: Union[None, dict]):
     print("Received event: " + json.dumps(event, indent=2))
     sub_rss = event["rss"]
@@ -38,7 +39,7 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
         previous_data = get_previous_data(hash_collection, rss_url)
 
         # 比较哈希值，检测是否改变
-        if local_hash != previous_data["hash"]:
+        if local_hash != previous_data["hash"] or event["force"] == "true":
             # RSS 发生改变，执行你的逻辑
             print(f"RSS Feed for {rss_url} has changed. Performing logic...")
 
@@ -46,29 +47,37 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
 
             # 解析 XML 文件以提取新增文章的内容
             try:
-                new_articles = parse_and_get_new_articles(xml_content, previous_data["xml"])
+                new_articles = parse_and_get_new_articles(
+                    xml_content,
+                    "" if event["force"] == "true" else previous_data["xml"],
+                )
             except ET.ParseError as e:
                 print(f"Error parsing XML content: {e}")
                 new_articles = []  # 返回一个空列表或其他适当的值
 
-            # 在这里添加处理新增文章的逻辑
-            rss_result[rss_url] = [{"title": article["title"], "link": article["link"]} for article in new_articles]
-
+            rss_result[rss_url] = new_articles
             for article in new_articles:
-                print(f"{rss_url}: Found new article: {article['title']} - {article['link']}")
+                article_info = ", ".join(
+                    [f"{key}: {value}" for key, value in article.items()]
+                )
+                print(f"{rss_url}: Found new article: {article_info}")
 
             # 保存新的哈希值和 XML
-            save_current_data(hash_collection, rss_url, local_hash, xml_content=xml_content)
+            save_current_data(
+                hash_collection, rss_url, local_hash, xml_content=xml_content
+            )
         else:
             print(f"RSS Feed for {rss_url} has not changed.")
 
-    return rss_result
+    return json.dumps(rss_result, indent=4)
+
 
 def download_rss(rss_url: str, local_path: str) -> None:
     response = requests.get(rss_url)
     response.raise_for_status()  # 如果请求不成功，抛出异常
     with open(local_path, "wb") as f:
         f.write(response.content)
+
 
 def calculate_hash(file_path: str) -> str:
     # 计算文件的 MD5 哈希值
@@ -78,18 +87,27 @@ def calculate_hash(file_path: str) -> str:
             hasher.update(chunk)
     return hasher.hexdigest()
 
+
 def get_previous_data(hash_collection, rss_url: str) -> dict:
     # 获取上次保存的哈希值和 XML（从 MongoDB 中获取）
     document = hash_collection.find_one({"rss_url": rss_url})
-    return {"hash": document["hash"], "xml": document.get("xml", "")} if document else {"hash": "", "xml": ""}
+    return (
+        {"hash": document["hash"], "xml": document.get("xml", "")}
+        if document
+        else {"hash": "", "xml": ""}
+    )
 
-def save_current_data(hash_collection, rss_url: str, current_hash: str, xml_content: str) -> None:
+
+def save_current_data(
+    hash_collection, rss_url: str, current_hash: str, xml_content: str
+) -> None:
     # 保存当前 RSS 文件的哈希值和 XML 到 MongoDB
     hash_collection.update_one(
         {"rss_url": rss_url},
         {"$set": {"hash": current_hash, "xml": xml_content}},
-        upsert=True
+        upsert=True,
     )
+
 
 def parse_and_get_new_articles(xml_content: str, previous_xml: str) -> list:
     # 解析 XML 字符串，提取新增文章的内容
@@ -97,29 +115,78 @@ def parse_and_get_new_articles(xml_content: str, previous_xml: str) -> list:
 
     new_articles = []
 
-    # 如果没有之前的 XML，说明所有的 entry 元素都是新的
-    if not previous_xml:
-        for entry in root.findall(".//{http://www.w3.org/2005/Atom}entry"):
-            title = entry.find(".//{http://www.w3.org/2005/Atom}title").text
-            link = entry.find(".//{http://www.w3.org/2005/Atom}link").get("href")
-            new_articles.append({"title": title, "link": link})
+    if root.find(".//{http://www.w3.org/2005/Atom}entry") is not None:
+        # 如果没有之前的 XML，说明所有的 entry 元素都是新的
+        if not previous_xml:
+            for entry in root.findall(".//{http://www.w3.org/2005/Atom}entry"):
+                article = extract_article_info(entry)
+                new_articles.append(article)
+        else:
+            # 如果有之前的 XML，需要对比找出新增的 entry 元素
+            previous_root = ET.fromstring(previous_xml)
+
+            # 用于存储之前文章的标题，防止标题重复
+            previous_titles = set(
+                entry.find(".//{http://www.w3.org/2005/Atom}title").text
+                for entry in previous_root.findall(
+                    ".//{http://www.w3.org/2005/Atom}entry"
+                )
+            )
+
+            for entry in root.findall(".//{http://www.w3.org/2005/Atom}entry"):
+                title = entry.find(".//{http://www.w3.org/2005/Atom}title").text
+
+                # 如果标题不在之前的文章中，说明是新增的
+                if title not in previous_titles:
+                    article = extract_article_info(entry)
+                    new_articles.append(article)
+
+    elif root.find(".//item") is not None:
+        # 如果没有之前的 XML，说明所有的 item 元素都是新的
+        if not previous_xml:
+            for item in root.findall(".//item"):
+                article = extract_article_info(item)
+                new_articles.append(article)
+        else:
+            # 如果有之前的 XML，需要对比找出新增的 item 元素
+            previous_root = ET.fromstring(previous_xml)
+
+            # 用于存储之前文章的标题，防止标题重复
+            previous_titles = set(
+                item.find(".//title").text
+                for item in previous_root.findall(".//item")
+            )
+
+            for item in root.findall(".//item"):
+                title = item.find(".//title").text
+
+                # 如果标题不在之前的文章中，说明是新增的
+                if title not in previous_titles:
+                    article = extract_article_info(item)
+                    new_articles.append(article)
+
     else:
-        # 如果有之前的 XML，需要对比找出新增的 entry 元素
-        previous_root = ET.fromstring(previous_xml)
-
-        # 用于存储之前文章的标题，防止标题重复
-        previous_titles = set(entry.find(".//{http://www.w3.org/2005/Atom}title").text for entry in
-                             previous_root.findall(".//{http://www.w3.org/2005/Atom}entry"))
-
-        for entry in root.findall(".//{http://www.w3.org/2005/Atom}entry"):
-            title = entry.find(".//{http://www.w3.org/2005/Atom}title").text
-            link = entry.find(".//{http://www.w3.org/2005/Atom}link").get("href")
-
-            # 如果标题不在之前的文章中，说明是新增的
-            if title not in previous_titles:
-                new_articles.append({"title": title, "link": link})
+        raise ValueError("RSS Feed is not in a valid format.")
 
     return new_articles
+
+
+def extract_article_info(element) -> dict:
+    # 提取文章信息
+    article_info = {}
+
+    for child in element:
+        # 获取标签名
+        tag_name = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+
+        # 获取文本内容
+        text = child.get("href") if child.get("href") else child.text
+
+        # 使用标签名作为字典的键，文本内容作为值
+        article_info[tag_name] = text
+
+    return article_info
+
 
 def get_xml_content(xml_path: str) -> str:
     # 获取 XML 文件的内容
@@ -130,5 +197,7 @@ def get_xml_content(xml_path: str) -> str:
         print(f"Error reading XML file {xml_path}: {e}")
         return ""  # 返回一个空字符串或其他适当的值
 
+
 if __name__ == "__main__":
-    main_handler(None, None)  # 在本地测试时调用 main_handler 函数
+    event = {"rss": ["https://blog.misaka19614.com/index.xml"], "force": "true"}
+    main_handler(event, None)  # 在本地测试时调用 main_handler 函数
