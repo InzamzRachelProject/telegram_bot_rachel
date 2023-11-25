@@ -1,9 +1,8 @@
 import hashlib
-from hmac import new
 import os
 import requests
 import json
-import xml.etree.ElementTree as ET  # 用于解析 XML
+import xml.etree.ElementTree as ET
 from pymongo import MongoClient
 from typing import Union
 
@@ -11,7 +10,7 @@ from typing import Union
 def main_handler(event: Union[None, dict], context: Union[None, dict]):
     print("Received event: " + json.dumps(event, indent=2))
     event_body = json.loads(event["body"].replace('\\"', '"'))
-    sub_rss = event_body["rss"]
+    subscribed_chat_id = event_body["chat_id"]
 
     # 初始化 MongoDB 客户端
     mongo_uri = os.environ.get("MONGO_URI")
@@ -22,7 +21,10 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
     hash_collection = db[mongo_collection_name]
     rss_result = {}
 
-    for rss_url in sub_rss:
+    # 从数据库中获取订阅的 RSS 链接
+    subscribed_rss_urls = get_subscribed_rss_urls(db, subscribed_chat_id)
+
+    for rss_url in subscribed_rss_urls:
         # 本地存储路径
         local_path = "/tmp/rss_feed.xml"
 
@@ -37,38 +39,39 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
         local_hash = calculate_hash(local_path)
 
         # 获取上次保存的哈希值和 XML
-        previous_data = get_previous_data(hash_collection, rss_url)
+        previous_data_array = get_previous_data(hash_collection, subscribed_chat_id, rss_url)
 
-        # 比较哈希值，检测是否改变
-        if local_hash != previous_data["hash"] or event_body["force"] == "true":
-            # RSS 发生改变，执行你的逻辑
-            print(f"RSS Feed for {rss_url} has changed. Performing logic...")
+        for previous_data in previous_data_array:
+            # 比较哈希值，检测是否改变
+            if local_hash != previous_data["hash"] or event_body["force"] == "true":
+                # RSS 发生改变，执行你的逻辑
+                print(f"RSS Feed for {rss_url} has changed. Performing logic...")
 
-            xml_content = get_xml_content(local_path)
+                xml_content = get_xml_content(local_path)
 
-            # 解析 XML 文件以提取新增文章的内容
-            try:
-                new_articles = parse_and_get_new_articles(
-                    xml_content,
-                    "" if event_body["force"] == "true" else previous_data["xml"],
+                # 解析 XML 文件以提取新增文章的内容
+                try:
+                    new_articles = parse_and_get_new_articles(
+                        xml_content,
+                        "" if event_body["force"] == "true" else previous_data["xml"],
+                    )
+                except ET.ParseError as e:
+                    print(f"Error parsing XML content: {e}")
+                    new_articles = []  # 返回一个空列表或其他适当的值
+
+                rss_result[rss_url] = new_articles
+                for article in new_articles:
+                    article_info = "\n".join(
+                        [f"{key}: {value}" for key, value in article.items()]
+                    )
+                    print(f"{rss_url}: Found new article:\n{article_info}")
+
+                # 保存新的哈希值和 XML
+                save_current_data(
+                    hash_collection, subscribed_chat_id, rss_url, local_hash, xml_content=xml_content
                 )
-            except ET.ParseError as e:
-                print(f"Error parsing XML content: {e}")
-                new_articles = []  # 返回一个空列表或其他适当的值
-
-            rss_result[rss_url] = new_articles
-            for article in new_articles:
-                article_info = "\n".join(
-                    [f"{key}: {value}" for key, value in article.items()]
-                )
-                print(f"{rss_url}: Found new article:\n{article_info}")
-
-            # 保存新的哈希值和 XML
-            save_current_data(
-                hash_collection, rss_url, local_hash, xml_content=xml_content
-            )
-        else:
-            print(f"RSS Feed for {rss_url} has not changed.")
+            else:
+                print(f"RSS Feed for {rss_url} has not changed.")
 
     return rss_result
 
@@ -89,23 +92,27 @@ def calculate_hash(file_path: str) -> str:
     return hasher.hexdigest()
 
 
-def get_previous_data(hash_collection, rss_url: str) -> dict:
+def get_previous_data(hash_collection, subscribed_chat_id: str, rss_url: str) -> list:
     # 获取上次保存的哈希值和 XML（从 MongoDB 中获取）
-    document = hash_collection.find_one({"rss_url": rss_url})
-    return (
-        {"hash": document["hash"], "xml": document.get("xml", "")}
-        if document
-        else {"hash": "", "xml": ""}
-    )
+    document = hash_collection.find_one({"chat_id": subscribed_chat_id})
+    if document:
+        subscribe_info = document.get("subscribe_info", [])
+        return [
+            entry for entry in subscribe_info if entry["rss_url"] == rss_url
+        ]
+    else:
+        return []
 
 
 def save_current_data(
-    hash_collection, rss_url: str, current_hash: str, xml_content: str
+    hash_collection, subscribed_chat_id: str, rss_url: str, current_hash: str, xml_content: str
 ) -> None:
     # 保存当前 RSS 文件的哈希值和 XML 到 MongoDB
     hash_collection.update_one(
-        {"rss_url": rss_url},
-        {"$set": {"hash": current_hash, "xml": xml_content}},
+        {"chat_id": subscribed_chat_id},
+        {"$push": {
+            "subscribe_info": {"rss_url": rss_url, "hash": current_hash, "xml": xml_content}
+        }},
         upsert=True,
     )
 
@@ -199,9 +206,20 @@ def get_xml_content(xml_path: str) -> str:
         return ""  # 返回一个空字符串或其他适当的值
 
 
+def get_subscribed_rss_urls(db, subscribed_chat_id: str) -> list:
+    # 从数据库中获取订阅的 RSS 链接
+    config_collection = db["config"]
+    document = config_collection.find_one({"type": "rss"})
+    if document:
+        subscribe_info = document.get("subscribe_info", [])
+        return subscribe_info.get(subscribed_chat_id, [])
+    else:
+        return []
+
+
 if __name__ == "__main__":
     event = {
-        "body": "{\"rss\": [\"http://blog.misaka19614.com/index.xml\"], \"force\": \"true\"}",
+        "body": "{\"force\": \"true\", \"chat_id\": \"-1001618295683\"}",
         "headerParameters": {},
         "headers": {
             "accept": "*/*",
