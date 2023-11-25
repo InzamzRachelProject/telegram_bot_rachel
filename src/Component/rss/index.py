@@ -10,7 +10,8 @@ from typing import Union
 
 def main_handler(event: Union[None, dict], context: Union[None, dict]):
     print("Received event: " + json.dumps(event, indent=2))
-    sub_rss = event["rss"]
+    event_body = json.loads(event["body"].replace('\\"', '"'))
+    sub_rss = event_body["rss"]
 
     # 初始化 MongoDB 客户端
     mongo_uri = os.environ.get("MONGO_URI")
@@ -39,7 +40,7 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
         previous_data = get_previous_data(hash_collection, rss_url)
 
         # 比较哈希值，检测是否改变
-        if local_hash != previous_data["hash"] or event["force"] == "true":
+        if local_hash != previous_data["hash"] or event_body["force"] == "true":
             # RSS 发生改变，执行你的逻辑
             print(f"RSS Feed for {rss_url} has changed. Performing logic...")
 
@@ -49,7 +50,7 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
             try:
                 new_articles = parse_and_get_new_articles(
                     xml_content,
-                    "" if event["force"] == "true" else previous_data["xml"],
+                    "" if event_body["force"] == "true" else previous_data["xml"],
                 )
             except ET.ParseError as e:
                 print(f"Error parsing XML content: {e}")
@@ -57,10 +58,10 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
 
             rss_result[rss_url] = new_articles
             for article in new_articles:
-                article_info = ", ".join(
+                article_info = "\n".join(
                     [f"{key}: {value}" for key, value in article.items()]
                 )
-                print(f"{rss_url}: Found new article: {article_info}")
+                print(f"{rss_url}: Found new article:\n{article_info}")
 
             # 保存新的哈希值和 XML
             save_current_data(
@@ -199,5 +200,21 @@ def get_xml_content(xml_path: str) -> str:
 
 
 if __name__ == "__main__":
-    event = {"rss": ["https://blog.misaka19614.com/index.xml"], "force": "true"}
-    main_handler(event, None)  # 在本地测试时调用 main_handler 函数
+    event = {
+        "body": "{\"rss\": [\"http://blog.misaka19614.com/index.xml\"], \"force\": \"true\"}",
+        "headerParameters": {},
+        "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "connection": "keep-alive",
+            "content-length": "67",
+            "content-type": "application/json",
+            "host": "service-4z1m12cm-1305878470.hk.tencentapigw.com",
+            "requestsource": "APIGW",
+            "user-agent": "python-requests/2.31.0",
+            "x-api-requestid": "11e754266a45a0d3383eb8407360cbdb",
+            "x-api-scheme": "https",
+            "x-b3-traceid": "11e754266a45a0d3383eb8407360cbdb"
+        }
+    }
+    print(main_handler(event, None))  # 在本地测试时调用 main_handler 函数
