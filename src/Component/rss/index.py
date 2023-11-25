@@ -70,7 +70,7 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
         else:
             print(f"RSS Feed for {rss_url} has not changed.")
 
-    return json.dumps(rss_result, indent=4)
+    return rss_result
 
 
 def download_rss(rss_url: str, local_path: str) -> None:
