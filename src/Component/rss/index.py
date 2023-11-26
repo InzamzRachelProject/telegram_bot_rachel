@@ -109,12 +109,16 @@ def save_current_data(
 ) -> None:
     # 保存当前 RSS 文件的哈希值和 XML 到 MongoDB
     hash_collection.update_one(
-        {"chat_id": subscribed_chat_id},
-        {"$push": {
-            "subscribe_info": {"rss_url": rss_url, "hash": current_hash, "xml": xml_content}
-        }},
+        {"chat_id": subscribed_chat_id, "subscribe_info.rss_url": rss_url},
+        {
+            "$set": {
+                "subscribe_info.$.hash": current_hash,
+                "subscribe_info.$.xml": xml_content,
+            }
+        },
         upsert=True,
     )
+
 
 
 def parse_and_get_new_articles(xml_content: str, previous_xml: str) -> list:
