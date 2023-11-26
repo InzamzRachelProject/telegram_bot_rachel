@@ -35,7 +35,7 @@ def main_handler(event, context):
     return "Received message: " + json.dumps(message, indent=2)
 
 
-def command_handler(message: dict, bot: telebot.TeleBot) -> tuple[int, str]:
+def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
     command_args: list = message["text"].split(" ")
     if command_args[0] == "/echo":
         bot.send_message(
@@ -118,7 +118,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> tuple[int, str]:
                 )
 
             rss_links = command_args[2:]
-            result = subscribe_rss_links(rss_links)
+            result = subscribe_rss_links(message["chat"]["id"], rss_links)
             bot.send_message(
                 message["chat"]["id"], 
                 result[1],
@@ -140,7 +140,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> tuple[int, str]:
                 )
 
             rss_links = command_args[2:]
-            result = unsubscribe_rss_links(rss_links)
+            result = unsubscribe_rss_links(message["chat"]["id"], rss_links)
             bot.send_message(
                 message["chat"]["id"],
                 result[1],
@@ -150,10 +150,10 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> tuple[int, str]:
 
         # 处理 list 子命令
         elif sub_command == "list":
-            result = list_subscribed_rss_links()
+            result = list_subscribed_rss_links(message["chat"]["id"])
             bot.send_message(
                 message["chat"]["id"], 
-                result[1],
+                result[1] if result[1] else "No RSS links subscribed.",
                 reply_to_message_id=message["message_id"],
             )
             return result
@@ -188,35 +188,38 @@ def askgpt(prompt: str) -> str:
     return completion.choices[0].message.content
 
 
-def subscribe_rss_links(rss_links: list) -> tuple[int, str]:
+def subscribe_rss_links(chat_id: int, rss_links: list[str]) -> Tuple[int, str]:
     # 连接 MongoDB
     mongo_uri = os.environ.get("MONGO_URI")
-    mongo_database_name = os.environ.get("MONGO_DATABASE_NAME", "TelegramBot")
-    mongo_collection_name = os.environ.get("MONGO_CONFIG_COLLECTION_NAME", "config")
-    mongo_client = MongoClient(mongo_uri)
-    db = mongo_client[mongo_database_name]
-    config_collection = db[mongo_collection_name]
+    database_name = os.environ.get("MONGO_DATABASE_NAME", "TelegramBot")
+    collection_name = os.environ.get("MONGO_CONFIG_COLLECTION_NAME", "config")
+
+    # 连接 MongoDB
+    client = MongoClient(mongo_uri)
+    db = client[database_name]
+    collection = db[collection_name]
 
     try:
         # 获取现有的订阅配置
-        config_document = config_collection.find_one({"type": "rss"})
-        rss_links_existing = set(config_document.get("rss_links", []))
+        config_document = collection.find_one({"type": "rss"})
+        subscribe_info = config_document.get("subscribe_info", {})
+        chat_subscribe = subscribe_info.get(str(chat_id), [])
 
         # 检查是否有重复的订阅链接
-        duplicate_links = set(rss_links) & rss_links_existing
+        duplicate_links = set(rss_links) & set(chat_subscribe)
         info_messages = []
         if duplicate_links:
             info_messages.append(f"INFO: These RSS links are already subscribed: {', '.join(duplicate_links)}")
 
         # 更新订阅配置
-        rss_links_new = list(rss_links_existing.union(rss_links))
-        config_collection.update_one(
-            {"type": "rss"}, {"$set": {"rss_links": rss_links_new}}, upsert=True
+        new_rss_urls = list(set(chat_subscribe).union(rss_links))
+        collection.update_one(
+            {"type": "rss"}, {"$set": {"subscribe_info.{}".format(chat_id): new_rss_urls}}, upsert=True
         )
 
-        rss_links_add = set(rss_links_new).difference(set(rss_links_existing))
-        if rss_links_add:
-            success_message = f"Subscribed to RSS links: {', '.join(rss_links_add)}"
+        rss_urls_added = set(new_rss_urls).difference(set(chat_subscribe))
+        if rss_urls_added:
+            success_message = f"Subscribed to RSS links: {', '.join(rss_urls_added)}"
             info_messages.append(success_message)
 
         return 0, "\n".join(info_messages)
@@ -227,10 +230,10 @@ def subscribe_rss_links(rss_links: list) -> tuple[int, str]:
 
     finally:
         # 关闭 MongoDB 连接
-        mongo_client.close()
+        client.close()
 
 
-def unsubscribe_rss_links(links: List[str]) -> Tuple[int, str]:
+def unsubscribe_rss_links(chat_id: int, links: List[str]) -> Tuple[int, str]:
     # 获取 MongoDB 相关配置
     mongo_uri = os.environ.get("MONGO_URI")
     database_name = os.environ.get("MONGO_DATABASE_NAME", "TelegramBot")
@@ -244,26 +247,27 @@ def unsubscribe_rss_links(links: List[str]) -> Tuple[int, str]:
     try:
         # 查找当前配置文档
         config_document = collection.find_one({"type": "rss"})
+        subscribe_info = config_document.get("subscribe_info", {})
 
-        if not config_document or "rss_links" not in config_document:
+        if not subscribe_info:
             warning_message = "WARNING: No RSS links found for unsubscription."
             return 1, warning_message
 
         # 获取当前订阅链接列表
-        current_links = set(config_document["rss_links"])
+        current_rss_urls = set(subscribe_info.get(str(chat_id), []))
         info_messages = []
 
         # 遍历输入的链接，取消订阅
         for link in links:
-            if link in current_links:
-                current_links.remove(link)
+            if link in current_rss_urls:
+                current_rss_urls.remove(link)
             else:
                 warning_message = f"WARNING: Link '{link}' not found in current subscriptions."
                 info_messages.append(warning_message)
 
         # 更新配置文档
         collection.update_one(
-            {"type": "rss"}, {"$set": {"rss_links": list(current_links)}}
+            {"type": "rss"}, {"$set": {"subscribe_info.{}".format(chat_id): list(current_rss_urls)}}
         )
 
         success_message = "Unsubscription successful."
@@ -279,7 +283,7 @@ def unsubscribe_rss_links(links: List[str]) -> Tuple[int, str]:
         client.close()
 
 
-def list_subscribed_rss_links() -> Tuple[int, List[str]]:
+def list_subscribed_rss_links(chat_id: int) -> Tuple[int, List[str]]:
     # 获取 MongoDB 相关配置
     mongo_uri = os.environ.get("MONGO_URI")
     database_name = os.environ.get("MONGO_DATABASE_NAME", "TelegramBot")
@@ -293,16 +297,17 @@ def list_subscribed_rss_links() -> Tuple[int, List[str]]:
     try:
         # 查找当前配置文档
         config_document = collection.find_one({"type": "rss"})
-
-        if not config_document or "rss_links" not in config_document:
+        
+        subscribe_info = config_document.get("subscribe_info", {})
+        if not subscribe_info:
+            print("No subscribe info")
             return 0, []
 
         # 获取当前订阅链接列表
-        subscribed_links = config_document["rss_links"]
+        subscribed_rss_urls = subscribe_info.get(str(chat_id), [])
 
-        return 0, subscribed_links
+        return 0, subscribed_rss_urls
 
-    except Exception as e:
         return 1, []
 
     finally:
