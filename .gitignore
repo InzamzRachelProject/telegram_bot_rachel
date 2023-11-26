@@ -6,3 +6,6 @@ env
 
 # scf
 **/layer**
+
+# MacOS
+.DS_Store
