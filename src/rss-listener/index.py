@@ -49,9 +49,7 @@ def main_handler(event, context):
     for chat_id, rss_links in subscribed_info.items():
         # 构造 HTTP 请求体
         request_body = {
-            "chat_id": chat_id,
-            # 用于测试
-            "force": "false",
+            "chat_id": chat_id
         }
 
         # 构造 HTTP 请求头
@@ -64,7 +62,7 @@ def main_handler(event, context):
 
         # 解析 RSS 订阅函数的返回结果
         rss_result = response.json()
-        if rss_result.get("errorCode"):
+        if rss_result.get("errorCode") == -1:
             print(f"Error: {rss_result['errorMessage']}")
             continue
 
