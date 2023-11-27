@@ -43,7 +43,7 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
 
         for previous_data in previous_data_array:
             # 比较哈希值，检测是否改变
-            if local_hash != previous_data["hash"] or event_body["force"] == "true":
+            if local_hash != previous_data["hash"] or ("force" in event_body.keys() and event_body["force"] == "true"):
                 # RSS 发生改变，执行你的逻辑
                 print(f"RSS Feed for {rss_url} has changed. Performing logic...")
 
@@ -53,7 +53,7 @@ def main_handler(event: Union[None, dict], context: Union[None, dict]):
                 try:
                     new_articles = parse_and_get_new_articles(
                         xml_content,
-                        "" if event_body["force"] == "true" else previous_data["xml"],
+                        "" if "force" not in event_body.keys() or event_body["force"] == "true" else previous_data["xml"],
                     )
                 except ET.ParseError as e:
                     print(f"Error parsing XML content: {e}")
