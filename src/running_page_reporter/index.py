@@ -9,7 +9,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d
 import polyline
+from flask import Flask, request, jsonify
 
+app = Flask(__name__)
 
 class PolylineConverter:
     def __init__(
@@ -83,18 +85,19 @@ def send_telegram_message_with_image(chat_id, message, image_file):
     # 替换为你的 Telegram 发送消息的逻辑
     telegram_bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     bot = TeleBot(telegram_bot_token)
-    bot.send_photo(chat_id, open(polyline_image, "rb"), caption=message)
+    bot.send_photo(chat_id, open(image_file, "rb"), caption=message)
 
 
-def check_github_webhook_secret(event, context):
+def check_github_webhook_secret(request):
+    data = request.get_json()
     # 替换为你的 GitHub Webhook Secret
+    print(data)
     github_webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET")
 
-    # 获取 GitHub Webhook 的 HTTP 请求头中的 X-Hub-Signature 字段
-    github_webhook_signature = event.get("headers", {}).get("X-Hub-Signature")
+    github_webhook_signature = data["headers"]["x-hub-signature"]
 
     # 获取 GitHub Webhook 的 HTTP 请求体
-    github_webhook_body = event.get("body")
+    github_webhook_body = data["body"]
 
     # 计算签名
     signature = (
@@ -106,15 +109,20 @@ def check_github_webhook_secret(event, context):
         ).hexdigest()
     )
 
+    print("Signature: " + signature)
+    print("X-Hub-Signature: " + github_webhook_signature)
+    
     # 对比签名
     if not hmac.compare_digest(signature, github_webhook_signature):
         raise Exception("Invalid GitHub Webhook Secret")
 
 
-def main_handler(event, context):
+@app.route('/event-invoke', methods=['POST'])
+def main_handler():
+    
     file_url = os.environ.get("REMOTE_FILE_URL")
 
-    check_github_webhook_secret(event, context)
+    check_github_webhook_secret(request)
 
     telegram_config = {
         "mongo_uri": os.environ.get("MONGO_URI"),
@@ -182,3 +190,4 @@ def main_handler(event, context):
         print("文件未更新。没有新的活动需要处理。")
 
     client.close()
+    return jsonify({"message": "success"})
