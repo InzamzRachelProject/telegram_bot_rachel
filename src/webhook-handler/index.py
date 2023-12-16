@@ -4,6 +4,8 @@ import telebot
 import os
 import openai
 import traceback
+import requests
+import re
 from pymongo import MongoClient
 from typing import Tuple, List
 
@@ -46,9 +48,10 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
         return 0, "Echo command exec success"
     if command_args[0] == "/askgpt":
         try:
+            answer = askgpt(message["text"][8:])
             bot.send_message(
                 message["chat"]["id"],
-                askgpt(message["text"][8:]),
+                escape_markdown_v2(answer),
                 reply_to_message_id=message["message_id"],
                 parse_mode="MarkdownV2",
             )
@@ -174,18 +177,29 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
 
 
 def askgpt(prompt: str) -> str:
-    openai.api_key = os.getenv("openai_api_key")
-    completion = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo-1106",
-        messages=[
+    url = os.getenv("OPENAI_API_URL")
+    payload = {
+        "model": os.getenv("OPENAI_MODEL"),
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an awesome chatbot"
+            },
             {
                 "role": "user",
-                "content": prompt,
-            },
-        ],
-    )
-    print("Answer:\n" + completion.choices[0].message.content)
-    return completion.choices[0].message.content
+                "content": prompt
+            }
+        ]
+    }
+    headers = {
+        "Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")
+    }
+
+    response = requests.post(url, json=payload, headers=headers, stream=False).json()
+    # print(response.text)
+    
+    print("Answer:" + response['choices'][0]['message']['content'])
+    return response['choices'][0]['message']['content']
 
 
 def subscribe_rss_links(chat_id: int, rss_links: list[str]) -> Tuple[int, str]:
@@ -313,3 +327,91 @@ def list_subscribed_rss_links(chat_id: int) -> Tuple[int, List[str]]:
     finally:
         # 关闭 MongoDB 连接
         client.close()
+
+
+def escape_markdown_v2(text):
+    # Escape special characters for MarkdownV2
+    # except for triple backticks which denote code blocks
+    escape_chars = '_*[]()~`>#+-=|{}.!\\'
+    code_block_delimiter = '```'
+
+    escaped_text = ''
+    code_block_open = False
+    last_pos = 0
+
+    # Find all occurrences of triple backticks
+    for match in re.finditer(r'(```)', text):
+        start, end = match.span()
+
+        # If we find an opening delimiter and we're not already in a code block
+        if not code_block_open:
+            # Escape section before code block
+            for char in text[last_pos:start]:
+                if char in escape_chars and char != '`':  # Single backticks (inline code) should be escaped
+                    escaped_text += '\\' + char
+                else:
+                    escaped_text += char
+            # Add code block delimiter as is
+            escaped_text += code_block_delimiter
+        else:
+            # Add text within code block as is
+            escaped_text += text[last_pos:end]
+
+        code_block_open = not code_block_open
+        last_pos = end
+
+    # Escape section after the last code block
+    for char in text[last_pos:]:
+        if char in escape_chars and char != '`':  # Again, make sure to escape single backticks
+            escaped_text += '\\' + char
+        else:
+            escaped_text += char
+    print(escaped_text)
+    return escaped_text
+
+# 写一个 Hello World 程序在 Python 中是非常简单的。下面是一个基本示例：
+# ```python
+# print("Hello, World!")
+# ```
+# 要运行这个程序，你需要有 Python 安装在你的计算机上。然后你可以把这段代码保存到一个文件中，通常以 `.py` 结尾（例如: `hello_world.py`），然后在命令行中运行这个文件。例如，如果你使用的是 Windows 系统，可以在命令提示符中输入：
+# ```bash
+# python hello_world.py
+# ```
+# 如果你使用的是 Linux 或 macOS，你可能需要这样执行：
+# ```bash
+# python3 hello_world.py
+# ```
+# 在某些系统中，你可能需要确保 Python 的安装路径被添加到了环境变量中，否则你可能需要使用完整的路径来运行 Python，像这样：
+# ```bash
+# /path/to/python3 hello_world.py
+# ```
+# 当你运行这个 Python 脚本时，它会在终端或命令行窗口中打印出 "Hello, World!"。
+# markdown_text = (
+#     "写一个 Hello World 程序在 Python 中是非常简单的。下面是一个基本示例：\n"
+#     "```python\n"
+#     'print("Hello, World!")\n'
+#     "```\n"
+#     "要运行这个程序，你需要有 Python 安装在你的计算机上。然后你可以把这段代码保存到一个文件中，通常以 `.py` 结尾（例如: `hello_world.py`），然后在命令行中运行这个文件。例如，如果你使用的是 Windows 系统，可以在命令提示符中输入：\n"
+#     "```bash\n"
+#     "python hello_world.py\n"
+#     "```\n"
+#     "如果你使用的是 Linux 或 macOS，你可能需要这样执行：\n"
+#     "```bash\n"
+#     "python3 hello_world.py\n"
+#     "```\n"
+#     "在某些系统中，你可能需要确保 Python 的安装路径被添加到了环境变量中，否则你可能需要使用完整的路径来运行 Python，像这样：\n"
+#     "```bash\n"
+#     "/path/to/python3 hello_world.py\n"
+#     "```\n"
+#     "当你运行这个 Python 脚本时，它会在终端或命令行窗口中打印出 \"Hello, World!\"。"
+# )
+
+# escaped_text = escape_markdown_v2(markdown_text)
+# print(escaped_text)
+
+# bot = telebot.TeleBot(os.getenv("TELEGRAM_BOT_TOKEN"))
+# bot.send_message(
+#     os.getenv("MASTER_CHAT_ID"),
+#     escaped_text,
+#     parse_mode="MarkdownV2",
+# )
