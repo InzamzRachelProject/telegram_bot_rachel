@@ -28,12 +28,13 @@ def main_handler(event, context):
     message = update["message"]
 
     # 命令处理器
-    if bot and message["entities"][0]["type"] == "bot_command":
+    if bot and "text" in message and message["text"].startswith("/"):
         bot = telebot.TeleBot(tele_token)
         ret, msg = command_handler(message, bot)
         if ret == 0:
             return msg
         print(bot.get_me())
+
     return "Received message: " + json.dumps(message, indent=2)
 
 
