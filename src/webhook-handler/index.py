@@ -48,7 +48,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
         return 0, "Echo command exec success"
     if command_args[0] == "/askgpt":
         try:
-            answer = askgpt(message["text"][8:])
+            answer = f"🤖 {os.getenv('OPENAI_MODEL')}\n\n" + askgpt(message["text"][8:])
             bot.send_message(
                 message["chat"]["id"],
                 escape_markdown_v2(answer),
@@ -196,9 +196,8 @@ def askgpt(prompt: str) -> str:
     }
 
     response = requests.post(url, json=payload, headers=headers, stream=False).json()
-    # print(response.text)
-    
-    print("Answer:" + response['choices'][0]['message']['content'])
+    print(response)
+
     return response['choices'][0]['message']['content']
 
 
@@ -368,50 +367,3 @@ def escape_markdown_v2(text):
             escaped_text += char
     print(escaped_text)
     return escaped_text
-
-# 写一个 Hello World 程序在 Python 中是非常简单的。下面是一个基本示例：
-# ```python
-# print("Hello, World!")
-# ```
-# 要运行这个程序，你需要有 Python 安装在你的计算机上。然后你可以把这段代码保存到一个文件中，通常以 `.py` 结尾（例如: `hello_world.py`），然后在命令行中运行这个文件。例如，如果你使用的是 Windows 系统，可以在命令提示符中输入：
-# ```bash
-# python hello_world.py
-# ```
-# 如果你使用的是 Linux 或 macOS，你可能需要这样执行：
-# ```bash
-# python3 hello_world.py
-# ```
-# 在某些系统中，你可能需要确保 Python 的安装路径被添加到了环境变量中，否则你可能需要使用完整的路径来运行 Python，像这样：
-# ```bash
-# /path/to/python3 hello_world.py
-# ```
-# 当你运行这个 Python 脚本时，它会在终端或命令行窗口中打印出 "Hello, World!"。
-# markdown_text = (
-#     "写一个 Hello World 程序在 Python 中是非常简单的。下面是一个基本示例：\n"
-#     "```python\n"
-#     'print("Hello, World!")\n'
-#     "```\n"
-#     "要运行这个程序，你需要有 Python 安装在你的计算机上。然后你可以把这段代码保存到一个文件中，通常以 `.py` 结尾（例如: `hello_world.py`），然后在命令行中运行这个文件。例如，如果你使用的是 Windows 系统，可以在命令提示符中输入：\n"
-#     "```bash\n"
-#     "python hello_world.py\n"
-#     "```\n"
-#     "如果你使用的是 Linux 或 macOS，你可能需要这样执行：\n"
-#     "```bash\n"
-#     "python3 hello_world.py\n"
-#     "```\n"
-#     "在某些系统中，你可能需要确保 Python 的安装路径被添加到了环境变量中，否则你可能需要使用完整的路径来运行 Python，像这样：\n"
-#     "```bash\n"
-#     "/path/to/python3 hello_world.py\n"
-#     "```\n"
-#     "当你运行这个 Python 脚本时，它会在终端或命令行窗口中打印出 \"Hello, World!\"。"
-# )
-
-# escaped_text = escape_markdown_v2(markdown_text)
-# print(escaped_text)
-
-# bot = telebot.TeleBot(os.getenv("TELEGRAM_BOT_TOKEN"))
-# bot.send_message(
-#     os.getenv("MASTER_CHAT_ID"),
-#     escaped_text,
-#     parse_mode="MarkdownV2",
-# )
