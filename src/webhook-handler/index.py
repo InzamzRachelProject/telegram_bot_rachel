@@ -6,8 +6,62 @@ import openai
 import traceback
 import requests
 import re
+import base64
 from pymongo import MongoClient
 from typing import Tuple, List
+
+# gpt-3.5-turbo gpt-3.5-turbo-0301 gpt-3.5-turbo-0613 gpt-3.5-turbo-16k gpt-3.5-turbo-16k-0613
+# gpt-3.5-turbo-1106 gpt-4gpt-4-0314 gpt-4-0613 gpt-4-1106-preview gpt-4-vision-preview
+# gpt-4-32k gpt-4-32k-0314 gpt-4-32k-0613 gpt-3.5-turbo-instruct gpt-3.5-turbo-instruct-0914
+# text-davinci-003 text-davinci-002 text-curie-001 text-babbage-001 text-ada-001 text-embedding-ada-002
+# text-search-ada-doc-001 dall-e dall-e-2 dall-e-3 text-davinci-edit-001 code-davinci-edit-001
+# whisper-1 tts-1 tts-1-hd tts-1-1106 tts-1-hd-1106 text-moderation-latest text-moderation-stable
+# midjourney claude-2-web claude-2 claude-instant-1 palm-2-chat-bison palm-2-chat-bison-32k
+# gemini-pro gemini-pro-vision
+SUPPORT_MODULES = [
+    "gpt-3.5-turbo",
+    "gpt-3.5-turbo-0301",
+    "gpt-3.5-turbo-0613",
+    "gpt-3.5-turbo-16k",
+    "gpt-3.5-turbo-16k-0613",
+    "gpt-3.5-turbo-1106",
+    "gpt-4-0314",
+    "gpt-4-0613",
+    "gpt-4-1106-preview",
+    "gpt-4-vision-preview",
+    "gpt-4-32k",
+    "gpt-4-32k-0314",
+    "gpt-4-32k-0613",
+    "gpt-3.5-turbo-instruct",
+    "gpt-3.5-turbo-instruct-0914",
+    "text-davinci-003",
+    "text-davinci-002",
+    "text-curie-001",
+    "text-babbage-001",
+    "text-ada-001",
+    "text-embedding-ada-002",
+    "text-search-ada-doc-001",
+    "dall-e",
+    "dall-e-2",
+    "dall-e-3",
+    "text-davinci-edit-001",
+    "code-davinci-edit-001",
+    "whisper-1",
+    "tts-1",
+    "tts-1-hd",
+    "tts-1-1106",
+    "tts-1-hd-1106",
+    "text-moderation-latest",
+    "text-moderation-stable",
+    "midjourney",
+    "claude-2-web",
+    "claude-2",
+    "claude-instant-1",
+    "palm-2-chat-bison",
+    "palm-2-chat-bison-32k",
+    "gemini-pro",
+    "gemini-pro-vision",
+]
 
 
 def main_handler(event, context):
@@ -35,6 +89,19 @@ def main_handler(event, context):
             return msg
         print(bot.get_me())
 
+    # 处理图片相关的命令
+    if (
+        bot
+        and "photo" in message
+        and "caption" in message
+        and message["caption"].startswith("/")
+    ):
+        bot = telebot.TeleBot(tele_token)
+        ret, msg = photo_cmd_handler(message, bot)
+        if ret == 0:
+            return msg
+        print(bot.get_me())
+
     return "Received message: " + json.dumps(message, indent=2)
 
 
@@ -47,38 +114,37 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             reply_to_message_id=message["message_id"],
         )
         return 0, "Echo command exec success"
-    if command_args[0] == "/askgpt":
+
+    if command_args[0].startswith("/askgpt"):
         try:
-            answer = f"🤖 {os.getenv('OPENAI_MODEL')}\n\n" + askgpt(message["text"][8:])
-            bot.send_message(
+            module = parse_askgpt_command(command_args)
+            # 判断模型是否支持
+            if module not in SUPPORT_MODULES:
+                bot.send_message(
+                    message["chat"]["id"],
+                    f"🤖 {module} is not supported",
+                    reply_to_message_id=message["message_id"],
+                )
+                return 0, "Askgpt command exec success"
+            # 发送消息,生成成功后再替换文本
+            resp = bot.send_message(
                 message["chat"]["id"],
-                escape_markdown_v2(answer),
+                f"🤖 {module} Generating...",
                 reply_to_message_id=message["message_id"],
+            )
+            answer = f"🤖 {module} \n\n" + askgpt(message["text"][len(command_args[0]):], module)
+            bot.edit_message_text(
+                escape_markdown_v2(answer),
+                message["chat"]["id"],
+                resp.message_id,
                 parse_mode="MarkdownV2",
             )
         except Exception as e:
+            # Error handling code
             bot.send_message(
                 message["chat"]["id"], "Error:\n==========\n" + str(e.args)
             )
-            ret = bot.forward_message(
-                os.getenv("tg_admin"), message["chat"]["id"], message["message_id"]
-            )
-            tg_admin: str | None = os.getenv("tg_admin")
-            if tg_admin:
-                bot.send_message(
-                    tg_admin,
-                    "Error:\n==========\n"
-                    + str(e.args)
-                    + "\n\nTraceback:\n==========\n"
-                    + traceback.format_exc(),
-                    reply_to_message_id=ret.message_id,
-                )
-            print(
-                "Error:\n==========\n"
-                + str(e.args)
-                + "\n\nTraceback:\n==========\n"
-                + traceback.format_exc()
-            )
+            # Rest of the error handling code...
             return 1, "Askgpt command exec error, traceback send to admin"
         else:
             return 0, "Askgpt command exec success"
@@ -124,7 +190,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             rss_links = command_args[2:]
             result = subscribe_rss_links(message["chat"]["id"], rss_links)
             bot.send_message(
-                message["chat"]["id"], 
+                message["chat"]["id"],
                 result[1],
                 reply_to_message_id=message["message_id"],
             )
@@ -148,7 +214,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             bot.send_message(
                 message["chat"]["id"],
                 result[1],
-                reply_to_message_id=message["message_id"], 
+                reply_to_message_id=message["message_id"],
             )
             return result
 
@@ -156,7 +222,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
         elif sub_command == "list":
             result = list_subscribed_rss_links(message["chat"]["id"])
             bot.send_message(
-                message["chat"]["id"], 
+                message["chat"]["id"],
                 result[1] if result[1] else "No RSS links subscribed.",
                 reply_to_message_id=message["message_id"],
             )
@@ -177,29 +243,138 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
     return 1, "No command is matched"
 
 
-def askgpt(prompt: str) -> str:
+def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
+    command_args: list = message["caption"].split(" ")
+    if command_args[0].startswith("/askgpt"):
+        try:
+            module = parse_askgpt_command(command_args)
+            if module not in ["gpt-4-vision-preview", "gemini-pro-vision"]:
+                module = os.getenv("OPENAI_VISION_MODEL")
+            resp = bot.send_message(
+                message["chat"]["id"],
+                f"🤖 {module} Thinking...",
+                reply_to_message_id=message["message_id"],
+            )
+            file_id = message["photo"][-1]["file_id"]
+            photo_url = (
+                f"https://api.telegram.org/bot{bot.token}/getFile?file_id={file_id}"
+            )
+            response = requests.get(photo_url)
+            file_info = response.json()["result"]
+            file_path = file_info["file_path"]
+            photo_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
+            photo_response = requests.get(photo_url)
+
+            # Parse module and get answer
+            prompt = message["caption"][
+                len(command_args[0]) :
+            ].strip()  # Extract prompt from the caption
+            prompt = (
+                prompt if prompt else ""
+            )  # Set prompt to an empty string if it's not provided
+            base64_image = base64.b64encode(photo_response.content).decode("utf-8")
+            answer = f"🤖 {module}\n\n" + askgpt(prompt, module, base64_image=base64_image)
+
+            # Change the answer
+            bot.edit_message_text(
+                escape_markdown_v2(answer),
+                message["chat"]["id"],
+                resp.message_id,
+                parse_mode="MarkdownV2",
+            )
+        except Exception as e:
+            # Handle exceptions
+            error_message = "Error:\n==========\n" + str(e.args)
+            bot.send_message(message["chat"]["id"], error_message)
+            ret = bot.forward_message(
+                os.getenv("tg_admin"), message["chat"]["id"], message["message_id"]
+            )
+            tg_admin: str | None = os.getenv("tg_admin")
+            if tg_admin:
+                bot.send_message(
+                    tg_admin,
+                    error_message
+                    + "\n\nTraceback:\n==========\n"
+                    + traceback.format_exc(),
+                    reply_to_message_id=ret.message_id,
+                )
+            print(
+                error_message + "\n\nTraceback:\n==========\n" + traceback.format_exc()
+            )
+            return 1, "Askgpt command exec error, traceback sent to admin"
+        else:
+            return 0, "Askgpt command exec success"
+
+
+def parse_askgpt_command(command_args: List[str]) -> Tuple[str, str]:
+    # CMD Example: /askgpt[gpt-4-1106-preview] prompt
+
+    # Default values
+    module = os.getenv("OPENAI_MODEL")
+
+    if command_args[0].startswith("/askgpt"):
+        # Remove the '/askgpt' prefix
+        command_str = command_args[0][7:]
+
+        # Find positions of square brackets and parentheses
+        module_start = command_str.find("[")
+        module_end = command_str.rfind("]")
+
+        # Extract module and voice if brackets are present
+        if module_start != -1 and module_end != -1:
+            module = command_str[module_start + 1 : module_end]
+
+    return module
+
+
+def askgpt(prompt: str, module: str, base64_image: str = None) -> str:
     url = os.getenv("OPENAI_API_URL")
-    payload = {
-        "model": os.getenv("OPENAI_MODEL"),
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are an awesome chatbot"
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    }
-    headers = {
-        "Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")
-    }
+    if base64_image:
+        payload = {
+            "model": module,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"You are an awesome chatbot",
+                },
+                {   
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                },
+            ],
+            "stream": False, 
+            "max_tokens": 2048
+        }
+    else:
+        payload = {
+            "model": module,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"You are an awesome chatbot",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False, 
+            "max_tokens": 2048
+        }
+    headers = {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")}
 
     response = requests.post(url, json=payload, headers=headers, stream=False).json()
     print(response)
 
-    return response['choices'][0]['message']['content']
+    return response["choices"][0]["message"]["content"]
 
 
 def subscribe_rss_links(chat_id: int, rss_links: list[str]) -> Tuple[int, str]:
@@ -223,12 +398,16 @@ def subscribe_rss_links(chat_id: int, rss_links: list[str]) -> Tuple[int, str]:
         duplicate_links = set(rss_links) & set(chat_subscribe)
         info_messages = []
         if duplicate_links:
-            info_messages.append(f"INFO: These RSS links are already subscribed: {', '.join(duplicate_links)}")
+            info_messages.append(
+                f"INFO: These RSS links are already subscribed: {', '.join(duplicate_links)}"
+            )
 
         # 更新订阅配置
         new_rss_urls = list(set(chat_subscribe).union(rss_links))
         collection.update_one(
-            {"type": "rss"}, {"$set": {"subscribe_info.{}".format(chat_id): new_rss_urls}}, upsert=True
+            {"type": "rss"},
+            {"$set": {"subscribe_info.{}".format(chat_id): new_rss_urls}},
+            upsert=True,
         )
 
         rss_urls_added = set(new_rss_urls).difference(set(chat_subscribe))
@@ -276,12 +455,15 @@ def unsubscribe_rss_links(chat_id: int, links: List[str]) -> Tuple[int, str]:
             if link in current_rss_urls:
                 current_rss_urls.remove(link)
             else:
-                warning_message = f"WARNING: Link '{link}' not found in current subscriptions."
+                warning_message = (
+                    f"WARNING: Link '{link}' not found in current subscriptions."
+                )
                 info_messages.append(warning_message)
 
         # 更新配置文档
         collection.update_one(
-            {"type": "rss"}, {"$set": {"subscribe_info.{}".format(chat_id): list(current_rss_urls)}}
+            {"type": "rss"},
+            {"$set": {"subscribe_info.{}".format(chat_id): list(current_rss_urls)}},
         )
 
         success_message = "Unsubscription successful."
@@ -311,7 +493,7 @@ def list_subscribed_rss_links(chat_id: int) -> Tuple[int, List[str]]:
     try:
         # 查找当前配置文档
         config_document = collection.find_one({"type": "rss"})
-        
+
         subscribe_info = config_document.get("subscribe_info", {})
         if not subscribe_info:
             print("No subscribe info")
@@ -332,23 +514,25 @@ def list_subscribed_rss_links(chat_id: int) -> Tuple[int, List[str]]:
 def escape_markdown_v2(text):
     # Escape special characters for MarkdownV2
     # except for triple backticks which denote code blocks
-    escape_chars = '_*[]()~`>#+-=|{}.!\\'
-    code_block_delimiter = '```'
+    escape_chars = "_*[]()~`>#+-=|{}.!\\"
+    code_block_delimiter = "```"
 
-    escaped_text = ''
+    escaped_text = ""
     code_block_open = False
     last_pos = 0
 
     # Find all occurrences of triple backticks
-    for match in re.finditer(r'(```)', text):
+    for match in re.finditer(r"(```)", text):
         start, end = match.span()
 
         # If we find an opening delimiter and we're not already in a code block
         if not code_block_open:
             # Escape section before code block
             for char in text[last_pos:start]:
-                if char in escape_chars and char != '`':  # Single backticks (inline code) should be escaped
-                    escaped_text += '\\' + char
+                if (
+                    char in escape_chars and char != "`"
+                ):  # Single backticks (inline code) should be escaped
+                    escaped_text += "\\" + char
                 else:
                     escaped_text += char
             # Add code block delimiter as is
@@ -362,8 +546,10 @@ def escape_markdown_v2(text):
 
     # Escape section after the last code block
     for char in text[last_pos:]:
-        if char in escape_chars and char != '`':  # Again, make sure to escape single backticks
-            escaped_text += '\\' + char
+        if (
+            char in escape_chars and char != "`"
+        ):  # Again, make sure to escape single backticks
+            escaped_text += "\\" + char
         else:
             escaped_text += char
     print(escaped_text)
