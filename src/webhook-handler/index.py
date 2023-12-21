@@ -9,6 +9,7 @@ import re
 import base64
 from pymongo import MongoClient
 from typing import Tuple, List
+from modules.ask_ai import pic_generator
 
 # gpt-3.5-turbo gpt-3.5-turbo-0301 gpt-3.5-turbo-0613 gpt-3.5-turbo-16k gpt-3.5-turbo-16k-0613
 # gpt-3.5-turbo-1106 gpt-4gpt-4-0314 gpt-4-0613 gpt-4-1106-preview gpt-4-vision-preview
@@ -102,6 +103,38 @@ def main_handler(event, context):
             return msg
         print(bot.get_me())
 
+    # 处理新加的 /pic[dall-e-3] 命令
+    if (
+        bot
+        and "text" in message
+        and "entities" in message
+        and message["text"].startswith("/pic")
+    ):
+        bot = telebot.TeleBot(tele_token)
+        command_args: list = message["text"].split(" ")
+        model = parse_command_module(command_args, "/pic", "dall-e-3")
+        prompt = message["text"][len(command_args[0]):].strip()
+        resp = bot.send_message(
+            message["chat"]["id"],
+            f"🤖 {model} generating",
+            reply_to_message_id=message["message_id"],
+        )
+        ret, pic_url = pic_generator(model, prompt, return_type="url")
+        if ret != 0:
+            bot.edit_message_text(
+                f"🤖 {model} generating failed",
+                message["chat"]["id"],
+                resp.message_id,
+                parse_mode="MarkdownV2",
+            )
+            return msg
+        bot.delete_message(message["chat"]["id"], resp.message_id)
+        bot.send_photo(
+            chat_id=message["chat"]["id"],
+            photo=pic_url,
+            reply_to_message_id=message["message_id"],
+        )
+
     return "Received message: " + json.dumps(message, indent=2)
 
 
@@ -117,7 +150,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
 
     if command_args[0].startswith("/askgpt"):
         try:
-            module = parse_askgpt_command(command_args)
+            module = parse_command_module(command_args, "/askgpt", os.getenv("OPENAI_MODEL"))
             # 判断模型是否支持
             if module not in SUPPORT_MODULES:
                 bot.send_message(
@@ -247,7 +280,7 @@ def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
     command_args: list = message["caption"].split(" ")
     if command_args[0].startswith("/askgpt"):
         try:
-            module = parse_askgpt_command(command_args)
+            module = parse_command_module(command_args, "/askgpt", os.getenv("OPENAI_MODEL"))
             if module not in ["gpt-4-vision-preview", "gemini-pro-vision"]:
                 module = os.getenv("OPENAI_VISION_MODEL")
             resp = bot.send_message(
@@ -306,15 +339,15 @@ def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             return 0, "Askgpt command exec success"
 
 
-def parse_askgpt_command(command_args: List[str]) -> Tuple[str, str]:
+def parse_command_module(command_args: List[str], prefix: str, default_model: str) -> Tuple[str, str]:
     # CMD Example: /askgpt[gpt-4-1106-preview] prompt
 
     # Default values
-    module = os.getenv("OPENAI_MODEL")
+    module = default_model
 
-    if command_args[0].startswith("/askgpt"):
+    if command_args[0].startswith(prefix):
         # Remove the '/askgpt' prefix
-        command_str = command_args[0][7:]
+        command_str = command_args[0][len(prefix):]
 
         # Find positions of square brackets and parentheses
         module_start = command_str.find("[")
