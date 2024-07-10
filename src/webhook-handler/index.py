@@ -10,6 +10,7 @@ import base64
 from pymongo import MongoClient
 from typing import Tuple, List
 from modules.ask_ai import pic_generator
+from modules.card_maker import send_quote_pic_to_telegram
 
 SUPPORT_MODULES = [
     "gpt-3.5-turbo",
@@ -105,7 +106,7 @@ def main_handler(event, context):
         bot = telebot.TeleBot(tele_token)
         command_args: list = message["text"].split(" ")
         model = parse_command_module(command_args, "/pic", "dall-e-3")
-        prompt = message["text"][len(command_args[0]):].strip()
+        prompt = message["text"][len(command_args[0]) :].strip()
         resp = bot.send_message(
             message["chat"]["id"],
             f"🤖 {model} generating",
@@ -142,7 +143,9 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
 
     if command_args[0].startswith("/askgpt"):
         try:
-            module = parse_command_module(command_args, "/askgpt", os.getenv("OPENAI_MODEL"))
+            module = parse_command_module(
+                command_args, "/askgpt", os.getenv("OPENAI_MODEL")
+            )
             # 判断模型是否支持
             if module not in SUPPORT_MODULES:
                 bot.send_message(
@@ -157,7 +160,9 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
                 f"🤖 {module} Generating...",
                 reply_to_message_id=message["message_id"],
             )
-            answer = f"🤖 {module} \n\n" + askgpt(message["text"][len(command_args[0]):], module)
+            answer = f"🤖 {module} \n\n" + askgpt(
+                message["text"][len(command_args[0]) :], module
+            )
             bot.edit_message_text(
                 escape_markdown_v2(answer),
                 message["chat"]["id"],
@@ -173,6 +178,10 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             return 1, "Askgpt command exec error, traceback send to admin"
         else:
             return 0, "Askgpt command exec success"
+
+    if command_args[0] == "/random_quote":
+        send_quote_pic_to_telegram(message)
+        return 0, "Random quote command exec success"
 
     # 检查是否是 /rss 命令
     if command_args[0] == "/rss":
@@ -272,7 +281,9 @@ def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
     command_args: list = message["caption"].split(" ")
     if command_args[0].startswith("/askgpt"):
         try:
-            module = parse_command_module(command_args, "/askgpt", os.getenv("OPENAI_MODEL"))
+            module = parse_command_module(
+                command_args, "/askgpt", os.getenv("OPENAI_MODEL")
+            )
             if module not in ["gpt-4-vision-preview", "gemini-pro-vision"]:
                 module = os.getenv("OPENAI_VISION_MODEL")
             resp = bot.send_message(
@@ -298,7 +309,9 @@ def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
                 prompt if prompt else ""
             )  # Set prompt to an empty string if it's not provided
             base64_image = base64.b64encode(photo_response.content).decode("utf-8")
-            answer = f"🤖 {module}\n\n" + askgpt(prompt, module, base64_image=base64_image)
+            answer = f"🤖 {module}\n\n" + askgpt(
+                prompt, module, base64_image=base64_image
+            )
 
             # Change the answer
             bot.edit_message_text(
@@ -331,7 +344,9 @@ def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             return 0, "Askgpt command exec success"
 
 
-def parse_command_module(command_args: List[str], prefix: str, default_model: str) -> Tuple[str, str]:
+def parse_command_module(
+    command_args: List[str], prefix: str, default_model: str
+) -> Tuple[str, str]:
     # CMD Example: /askgpt[gpt-4-1106-preview] prompt
 
     # Default values
@@ -339,7 +354,7 @@ def parse_command_module(command_args: List[str], prefix: str, default_model: st
 
     if command_args[0].startswith(prefix):
         # Remove the '/askgpt' prefix
-        command_str = command_args[0][len(prefix):]
+        command_str = command_args[0][len(prefix) :]
 
         # Find positions of square brackets and parentheses
         module_start = command_str.find("[")
@@ -362,24 +377,21 @@ def askgpt(prompt: str, module: str, base64_image: str = None) -> str:
                     "role": "system",
                     "content": f"You are an awesome chatbot",
                 },
-                {   
+                {
                     "role": "user",
                     "content": [
                         {
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
+                            },
                         },
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]
+                        {"type": "text", "text": prompt},
+                    ],
                 },
             ],
-            "stream": False, 
-            "max_tokens": 2048
+            "stream": False,
+            "max_tokens": 2048,
         }
     else:
         payload = {
@@ -391,8 +403,8 @@ def askgpt(prompt: str, module: str, base64_image: str = None) -> str:
                 },
                 {"role": "user", "content": prompt},
             ],
-            "stream": False, 
-            "max_tokens": 2048
+            "stream": False,
+            "max_tokens": 2048,
         }
     headers = {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")}
 
