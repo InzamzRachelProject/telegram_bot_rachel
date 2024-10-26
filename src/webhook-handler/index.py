@@ -1,5 +1,8 @@
 # -*- coding: utf8 -*-
+from cgitb import text
+from http import client
 import json
+import time
 import telebot
 import os
 import openai
@@ -19,6 +22,10 @@ SUPPORT_MODULES = [
     "gpt-3.5-turbo-16k",
     "gpt-3.5-turbo-16k-0613",
     "gpt-3.5-turbo-1106",
+    "o1-preview",
+    "o1-mini",
+    "gpt-4o",
+    "gpt-4",
     "gpt-4-0314",
     "gpt-4-0613",
     "gpt-4-1106-preview",
@@ -58,6 +65,18 @@ SUPPORT_MODULES = [
 ]
 
 
+def get_character_link(speaker: str) -> str:
+    client = MongoClient(os.getenv("MONGODB_ATLAS_URI"))
+    db = client.get_database("CharacterProfiles")
+    default_collection = db.get_collection("default")
+    speaker_info = default_collection.find_one(
+        {"name": speaker},
+    )
+    if speaker_info == None:
+        return ""
+    return speaker_info.get("card_url", "")
+
+
 def main_handler(event, context):
     # 对 webhook 进行鉴权
     if event["headers"]["x-telegram-bot-api-secret-token"] != os.getenv(
@@ -73,7 +92,129 @@ def main_handler(event, context):
     bot = telebot.TeleBot(tele_token)
     update = json.loads(event["body"].replace('"', '"'))
     # print("Received message: " + json.dumps(update, indent = 2))
-    message = update["message"]
+    message = update.get("message", {})
+    forward_from_chat = message.get("forward_from_chat", {})
+    forward_from_chat_id = forward_from_chat.get("id", None)
+    forward_from_message_id = message.get("forward_from_message_id", None)
+
+    chat_group = message.get("chat", {}).get("id", None)
+    chat_group_message_id = message.get("message_id", None)
+    text = message.get("text", "").strip()
+    utf8_text = text.encode("utf-8").decode("utf-8")
+    print(
+        "chat_group: {}, chat_group_message_id: {}, forward_from_chat_id: {}, message: {}".format(
+            chat_group, chat_group_message_id, forward_from_chat_id, utf8_text
+        ),
+        flush=True,
+    )
+    while (
+        chat_group != None
+        and chat_group_message_id != None
+        and forward_from_message_id != None
+        and os.getenv("report_channel", None) == str(forward_from_chat_id)
+    ):
+        MongoDbUri = os.getenv("MONGODB_ATLAS_URI", None)
+        if MongoDbUri == None:
+            break
+        client = MongoClient(MongoDbUri)
+        db = client.get_database("BooksNotes")
+        msg_config = db.get_collection("MsgToBookname")
+        if msg_config == None:
+            break
+        print("forward_from_message_id: ", forward_from_message_id, flush=True)
+        for x in msg_config.find():
+            print(x, flush=True)
+        book_info = msg_config.find_one({"channel_message_id": forward_from_message_id})
+        if book_info == None:
+            break
+        print("book_info: ", book_info, flush=True)
+        book_name = book_info.get("book_name", None)
+        if book_name == None:
+            break
+        if book_info.get("reply_msg_info", None) == None:
+            msg_config.update_one(
+                {"channel_message_id": forward_from_message_id},
+                {"$set": {"reply_msg_info": {}}},
+            )
+        reply_msg_info = msg_config.find_one(
+            {"channel_message_id": forward_from_message_id}
+        )["reply_msg_info"]
+        print(f"book_name: {book_name}, reply_msg_info: ", reply_msg_info, flush=True)
+        dbBooksNotes = client.get_database("BooksNotes")
+
+        collections = dbBooksNotes.get_collection(book_name)
+        # print("collections {}".format(collections), flush=True)
+
+        content_hash_list = []
+        for note in collections.find():
+            # print(note, flush=True)
+            preview_url = None
+            content_hash_list.append(note["hash"])
+            if note["hash"] in reply_msg_info.keys():
+                print("match hash: ", note["hash"], flush=True)
+                continue
+            text_parts = [f"📚 {note['content']}"]
+            if note.get("speaker", None) != None:
+                speaker_charactor_link = get_character_link(note["speaker"])
+                print("speaker_charactor_link: ", speaker_charactor_link)
+                text_parts.append(f"🎙️ {note['speaker']}")
+                if speaker_charactor_link != "":
+                    preview_url = speaker_charactor_link
+            if note.get("character_comment", None) != None:
+                comment_character_link = get_character_link(note["character_comment"])
+                print("comment_character_link: ", comment_character_link)
+                text_parts.append(f"⚖️ {note['character_comment']}")
+                if comment_character_link != "":
+                    preview_url = comment_character_link
+            if note.get("note", None) != None and note["note"].strip() != "":
+                text_parts.append(f"💬 {note['note']}")
+            text = "\n".join(text_parts).replace("&", "&amp;")
+            print("preview_url: ", preview_url, flush=True)
+            if note["hash"] in reply_msg_info.keys():
+                print("edit_message_text: ", edit_message_text)
+                bot.edit_message_text(
+                    text,
+                    chat_group,
+                    reply_msg_info[note["hash"]],
+                    parse_mode="HTML",
+                    link_preview_options=telebot.types.LinkPreviewOptions(
+                        url=preview_url,
+                        prefer_small_media=True,
+                        show_above_text=True,
+                    ),
+                )
+                time.sleep(1)
+            else:
+                ret = bot.send_message(
+                    chat_group,
+                    text,
+                    reply_to_message_id=chat_group_message_id,
+                    parse_mode="HTML",
+                    link_preview_options=telebot.types.LinkPreviewOptions(
+                        url=preview_url,
+                        prefer_small_media=True,
+                        show_above_text=True,
+                    ),
+                )
+                print("ret: ", ret, flush=True)
+                reply_msg_info[note["hash"]] = ret.message_id
+                time.sleep(1)
+                print("reply_msg_info after update: ", reply_msg_info, flush=True)
+            msg_config.update_one(
+                {"channel_message_id": forward_from_message_id},
+                {"$set": {"reply_msg_info": reply_msg_info}},
+            )
+        reply_msg_info = msg_config.find_one(
+            {"channel_message_id": forward_from_message_id}
+        )["reply_msg_info"]
+        for content_hash in reply_msg_info.keys():
+            if content_hash not in content_hash_list:
+                bot.delete_message(chat_group, reply_msg_info[content_hash])
+                msg_config.update_one(
+                    {"channel_message_id": forward_from_message_id},
+                    {"$unset": {"reply_msg_info." + content_hash: ""}},
+                )
+        break
 
     # 命令处理器
     if bot and "text" in message and message["text"].startswith("/"):
@@ -134,11 +275,12 @@ def main_handler(event, context):
 def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
     command_args: list = message["text"].split(" ")
     if command_args[0] == "/echo":
-        bot.send_message(
-            message["chat"]["id"],
-            message["text"][6:],
-            reply_to_message_id=message["message_id"],
-        )
+        if len(message["text"][6:]) > 0:
+            bot.send_message(
+                message["chat"]["id"],
+                message["text"][6:],
+                reply_to_message_id=message["message_id"],
+            )
         return 0, "Echo command exec success"
 
     if command_args[0].startswith("/askgpt"):
