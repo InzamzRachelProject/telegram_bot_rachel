@@ -3,6 +3,84 @@ import traceback
 import requests
 from typing import Tuple, List
 
+import requests
+import redis
+import json
+
+r = redis.from_url(os.getenv("REDIS_URL"))
+# Initialize Redis connection
+
+def askgpt(prompt: str, module: str, user_id: str, base64_image: str = None) -> str:
+    url = os.getenv("OPENAI_API_URL")
+    allowed_users = os.getenv("ALLOWED_USERS", "").split(',')
+    print(f"ALLOWED_USERS: {allowed_users}")
+    print(f"User: {user_id}_call_count, Count: {r.get(user_id)}")
+    print(f"Ask GPT: {prompt}")
+
+    # Limit user's calls by checking redis 
+    if user_id not in allowed_users:
+        user_count = r.get(f"{user_id}_call_count")
+        if user_count is not None and int(user_count) >= os.getenv("MAX_CALLS", 5):
+            return "You have exceeded the maximum number of calls to this service."
+        else:
+            r.setex(f"{user_id}_call_count", 7200, 1 if user_count is None else int(user_count) + 1)
+
+    # Get previous context
+    past_conversation = r.get(f'{user_id}_context')
+    if past_conversation is None:
+        past_conversation = [
+            {
+                "role": "system",
+                "content": "You are an awesome chatbot"
+            }
+        ]
+    else:
+        past_conversation = json.loads(past_conversation)
+    
+    # Add new user's message
+    if base64_image:
+        past_conversation.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            },
+        )
+    else:
+        past_conversation.append(
+            {
+                "role": "user",
+                "content": prompt
+            },
+        )
+
+    payload = {
+        "model": module,
+        "messages": past_conversation,
+        "stream": False,
+        "max_tokens": 2048,
+    }
+    headers = {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")}
+
+    response = requests.post(url, json=payload, headers=headers, stream=False).json()
+    
+    # Save current context
+    past_conversation.append(
+        {
+            "role": "assistant",
+            "content": response["choices"][0]["message"]["content"]
+        }
+    )
+    r.setex(f'{user_id}_context', 7000, json.dumps(past_conversation))
+
+    return  response["choices"][0]["message"]["content"]
 
 def pic_generator(
     module: str,

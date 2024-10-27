@@ -5,14 +5,14 @@ import json
 import time
 import telebot
 import os
-import openai
+import redis
 import traceback
 import requests
 import re
 import base64
 from pymongo import MongoClient
 from typing import Tuple, List
-from modules.ask_ai import pic_generator
+from modules.ask_ai import pic_generator, askgpt
 from modules.card_maker import send_quote_pic_to_telegram
 
 SUPPORT_MODULES = [
@@ -24,6 +24,7 @@ SUPPORT_MODULES = [
     "gpt-3.5-turbo-1106",
     "o1-preview",
     "o1-mini",
+    "gpt-4o-mini",
     "gpt-4o",
     "gpt-4",
     "gpt-4-0314",
@@ -64,6 +65,7 @@ SUPPORT_MODULES = [
     "gemini-pro-vision",
 ]
 
+r = redis.from_url(os.getenv("REDIS_URL"))
 
 def get_character_link(speaker: str) -> str:
     client = MongoClient(os.getenv("MONGODB_ATLAS_URI"))
@@ -83,7 +85,7 @@ def main_handler(event, context):
         "telegram_bot_api_secret_token"
     ):
         return "Api auth failed"
-    print("Received event: " + json.dumps(event, indent=2))
+    print("Received event: " + json.dumps(event))
     tele_token = os.getenv("tele_token")
 
     if not tele_token:
@@ -282,8 +284,9 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
                 reply_to_message_id=message["message_id"],
             )
         return 0, "Echo command exec success"
-
-    if command_args[0].startswith("/askgpt"):
+    if command_args[0].startswith("/askgptclear"):
+        r.delete(f'{message["from"]["id"]}_context')
+    elif command_args[0].startswith("/askgpt"):
         try:
             module = parse_command_module(
                 command_args, "/askgpt", os.getenv("OPENAI_MODEL")
@@ -303,7 +306,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
                 reply_to_message_id=message["message_id"],
             )
             answer = f"🤖 {module} \n\n" + askgpt(
-                message["text"][len(command_args[0]) :], module
+                message["text"][len(command_args[0]) :], module, str(message["from"]["id"]),
             )
             bot.edit_message_text(
                 escape_markdown_v2(answer),
@@ -452,7 +455,8 @@ def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             )  # Set prompt to an empty string if it's not provided
             base64_image = base64.b64encode(photo_response.content).decode("utf-8")
             answer = f"🤖 {module}\n\n" + askgpt(
-                prompt, module, base64_image=base64_image
+                prompt, module, message["from"]["id"],
+                base64_image=base64_image,
             )
 
             # Change the answer
@@ -507,53 +511,6 @@ def parse_command_module(
             module = command_str[module_start + 1 : module_end]
 
     return module
-
-
-def askgpt(prompt: str, module: str, base64_image: str = None) -> str:
-    url = os.getenv("OPENAI_API_URL")
-    if base64_image:
-        payload = {
-            "model": module,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": f"You are an awesome chatbot",
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                },
-            ],
-            "stream": False,
-            "max_tokens": 2048,
-        }
-    else:
-        payload = {
-            "model": module,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": f"You are an awesome chatbot",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-            "max_tokens": 2048,
-        }
-    headers = {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")}
-
-    response = requests.post(url, json=payload, headers=headers, stream=False).json()
-    print(response)
-
-    return response["choices"][0]["message"]["content"]
 
 
 def subscribe_rss_links(chat_id: int, rss_links: list[str]) -> Tuple[int, str]:
