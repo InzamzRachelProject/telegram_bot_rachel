@@ -3,18 +3,58 @@ import os
 import requests
 import telebot
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-from modules.ask_ai import pic_generator
 from modules.get_random_quote import get_random_quote
+from modules.ask_ai import pic_generator, askgpt
+
+import json
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 
 class CardMaker:
-    def __init__(self, json_data, font_path, image_path, text_padding=80, gap=10):
-        self.data = json_data
+    def __init__(self, data_source, font_path, image_path, text_padding=80, gap=10, layout='vertical'):
+        """
+        初始化卡片制作器
+        
+        :param data_source: 数据源字典，必须包含content/author字段
+        :param font_path: 字体文件路径
+        :param image_path: 图片文件路径
+        :param text_padding: 文本区域边距
+        :param gap: 行间距
+        :param layout: 排版方式（ horizontal/vertical ）
+        """
+        self.data = data_source
         self.font_path = font_path
         self.image_path = image_path
-        self.font_size = 48
         self.text_padding = text_padding
         self.gap = gap
+        self.layout = layout
+        self.font_size = 48
+        
+        # 初始化文本内容
+        self.quote = self.data.get('content', '')
+        self.comment = self.data.get('note', '')
+        self.author = self.data.get('author', '')
+        self.speaker = self.data.get('speaker', '')
+        if not self.speaker:
+            self.speaker = f"——{self.author}"
+        if self.speaker == "——":
+            self.speaker = ""
+
+    @classmethod
+    def from_json(cls, json_data, font_path, image_path, **kwargs):
+        """从JSON数据创建实例"""
+        return cls(json_data, font_path, image_path, **kwargs)
+
+    @classmethod
+    def from_text(cls, content, author, comments="", speaker="", font_path="fonts/AlibabaHealthFont2.0CN-85B.ttf", image_path=""):
+        """直接通过文本创建实例"""
+        data = {
+            'content': content,
+            'author': author,
+            'note': comments,
+            'speaker': speaker
+        }
+        return cls(data, font_path, image_path)
 
     def calculate_text_size(self, text, font_size, max_width):
         draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
@@ -55,13 +95,13 @@ class CardMaker:
         low, high = 30, 60
         best_font_size = low
         quote = self.data.get("content", "")
-        comment = self.data.get("comments", "")
+        comment = self.data.get("note", "")
         speaker = self.data.get("speaker", "")
         if speaker == "":
             speaker = "——" + self.data["author"]
 
         print("quote:", quote)
-        print("comment:", comment)
+        print("note:", comment)
         print("speaker:", speaker)
 
         # 二分法搜索合适字体大小
@@ -100,7 +140,7 @@ class CardMaker:
         self.speaker_lines = []
 
         quote = self.data.get("content", "")
-        comment = self.data.get("comments", "")
+        comment = self.data.get("note", "")
         speaker = self.data.get("speaker", "")
         if speaker == "":
             speaker = "——" + self.data["author"]
@@ -149,6 +189,13 @@ class CardMaker:
         return lines
 
     def create_card(self, output_path):
+        """创建卡片主方法"""
+        if self.layout == 'horizontal':
+            self._create_horizontal_layout(output_path)
+        elif self.layout == 'vertical':
+            self._create_vertical_layout(output_path)
+
+    def _create_horizontal_layout(self, output_path):
         # 加载封面图片并应用模糊滤镜
         cover_image = Image.open(self.image_path)
         cover_image = cover_image.filter(ImageFilter.GaussianBlur(40))
@@ -231,6 +278,87 @@ class CardMaker:
         # 保存图像
         img.save(output_path)
 
+    def _create_vertical_layout(self, output_path):
+        """垂直布局实现（动态高度版本）"""
+        # 处理原始图片
+        cover_image = Image.open(self.image_path)
+        
+        WIDTH_FIXED = 1024
+
+        # 处理前景图片（宽度固定，高度自适应）
+        img_ratio = WIDTH_FIXED / cover_image.width
+        new_height = int(cover_image.height * img_ratio)
+        fg_image = cover_image.resize((WIDTH_FIXED, new_height), Image.Resampling.LANCZOS)
+        img_height = new_height  # 图片区域实际高度
+        
+        # 计算文本参数
+        text_max_width = WIDTH_FIXED - 2 * self.text_padding
+        
+        # 自动选择字体大小（仅基于宽度）
+        self.font_size = self.choose_font_size(text_max_width, float('inf'))
+        self.split_text_into_list(text_max_width)
+        
+        # 计算文字总高度
+        line_height = self.font_size + self.gap
+        text_total_height = 0
+        
+        # 处理各段落高度
+        for lines in [self.quote_lines, self.comment_lines, self.speaker_lines]:
+            text_total_height += len(lines) * line_height
+        
+        # 添加段落间距（仅在对应内容存在时添加）
+        text_total_height += self.font_size * sum([
+            1 if self.quote_lines else 0,
+            1 if self.comment_lines else 0
+        ])
+        
+        # 计算总画布高度（图片高度 + 文字区域 + 边距）
+        total_height = (
+            img_height + 
+            2 * self.text_padding + 
+            text_total_height
+        )
+        
+        # 创建模糊背景（适配新高度）
+        blurred_bg = cover_image.filter(ImageFilter.GaussianBlur(40))
+        bg_ratio = max(WIDTH_FIXED / blurred_bg.width, total_height / blurred_bg.height)
+        bg_size = (int(blurred_bg.width * bg_ratio), int(blurred_bg.height * bg_ratio))
+        bg_image = blurred_bg.resize(bg_size, Image.Resampling.LANCZOS)
+        bg_image = self.crop_to_fit(bg_image, WIDTH_FIXED, total_height)
+        
+        # 创建动态高度画布
+        img = Image.new("RGB", (WIDTH_FIXED, total_height))
+        img.paste(bg_image)
+        
+        # 粘贴前景图片
+        img.paste(fg_image, (0, 0), fg_image.convert("RGBA"))
+        
+        # 初始化绘图参数
+        d = ImageDraw.Draw(img)
+        font = ImageFont.truetype(self.font_path, self.font_size)
+        text_y = img_height + self.text_padding
+        
+        # 绘制文字内容
+        def draw_lines(lines, alignment="left"):
+            nonlocal text_y
+            for line in lines:
+                x = self.text_padding
+                if alignment == "right":
+                    line_width = font.getlength(line)
+                    x = WIDTH_FIXED - self.text_padding - line_width
+                d.text((x, text_y), line, fill="white", font=font)
+                text_y += line_height
+            if lines:
+                text_y += self.font_size  # 段落间距
+        
+        # 绘制各个段落
+        draw_lines(self.quote_lines)
+        draw_lines(self.comment_lines)
+        text_y -= self.font_size  # 移除最后一个段落的多余间距
+        draw_lines(self.speaker_lines, "right")
+        
+        img.save(output_path)
+
     def crop_to_fit(self, image, target_width, target_height):
         """
         图片按比例缩放后，如果不符合目标尺寸，则从中间裁剪到目标大小。
@@ -249,17 +377,23 @@ def send_quote_pic_to_telegram(message):
     print(json_data)
     font_path = "fonts/AlibabaHealthFont2.0CN-85B.ttf"
 
+    quote_layout = os.getenv("QUOTE_LAYOUT", "vertical")
+    size_ = "1024x1024"
+    if quote_layout == "horizontal":
+        size_ = "1024x1792"
+
     ret, pic_url = pic_generator(
-        "dall-e-3", json_data["content"], return_type="url", size="1024x1792"
+        "dall-e-3", json_data["content"], return_type="url", size=size_
     )
     print(ret, pic_url)
-    with open("image.png", "wb") as f:
+    with open("/tmp/image.png", "wb") as f:
         f.write(requests.get(pic_url).content)
     # 创建CardMaker实例
     card_maker = CardMaker(
         json_data,
         font_path,
         image_path="/tmp/image.png",
+        layout=quote_layout,
     )
     # 生成卡片，并保存到文件
     card_maker.create_card("/tmp/quote.png")
