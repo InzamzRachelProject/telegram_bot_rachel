@@ -1,5 +1,6 @@
 # -*- coding: utf8 -*-
 from cgitb import text
+from hashlib import md5
 from http import client
 import json
 import time
@@ -10,11 +11,12 @@ import traceback
 import requests
 import re
 import base64
+import pymongo
 from pymongo import MongoClient
 from typing import Tuple, List
 from modules.ask_ai import pic_generator, askgpt
 from modules.card_maker import send_quote_pic_to_telegram
-
+from modules.note_forward import push_channel
 SUPPORT_MODULES = [
     "gpt-3.5-turbo",
     "gpt-3.5-turbo-0301",
@@ -64,6 +66,17 @@ SUPPORT_MODULES = [
     "gemini-pro",
     "gemini-pro-vision",
 ]
+
+TEMP_JSON = """{
+    "author": "衣笠彰梧",
+    "chapter": "",
+    "color": "黄色",
+    "comments": "",
+    "content": "总之，我唯独清楚轻井泽今天是要持续她的方针——贬低我了。",
+    "date": "April 20, 2025",
+    "from": "欢迎来到实力至上主义的教室 7.5",
+    "type": 1
+}"""
 
 r = redis.from_url(os.getenv("REDIS_URL"))
 
@@ -217,6 +230,83 @@ def main_handler(event, context):
                     {"$unset": {"reply_msg_info." + content_hash: ""}},
                 )
         break
+
+    # 处理新加的 /add_note 命令
+    if (
+        bot
+        and "text" in message
+        and "entities" in message
+        and message["text"].startswith("/add_note")
+    ):
+        bot = telebot.TeleBot(tele_token)
+        raw_text = message["text"].replace("/add_note", "").strip()
+        raw_text = raw_text.replace('\\"', '"')
+        try:
+            print("raw_text: ", raw_text, flush=True)
+            x = json.loads(raw_text)
+            """{
+                "author": "衣笠彰梧",
+                "chapter": "",
+                "color": "黄色",
+                "comments": "",
+                "content": "总之，我唯独清楚轻井泽今天是要持续她的方针——贬低我了。",
+                "date": "April 20, 2025",
+                "from": "欢迎来到实力至上主义的教室 7.5",
+                "speaker": "衣笠彰梧",
+                "character_comment": "轻井泽惠",
+                "type": 1
+            }"""
+            if x.get("from", None) == None:
+                bot.send_message(
+                    message["chat"]["id"],
+                    "🤖 Invalid JSON format, from is empty",
+                    reply_to_message_id=message["message_id"],
+                )
+                return "🤖 Invalid JSON format: " + raw_text
+
+            client = MongoClient(os.getenv("MONGODB_ATLAS_URI"))
+            db = client.get_database("BooksNotes")
+            collections = db.get_collection(x["from"])
+            print("collections" + str(collections), flush=True)
+            x["contenthash"] = md5(x["content"].encode("utf-8")).hexdigest()
+            x["hash"] = "0"
+            x["hash"] = md5(x["content"].encode("utf-8")).hexdigest()
+            # print(f"note: {str(x)}")
+            upd_rst = collections.update_one(
+                {"contenthash": x["contenthash"]}, {"$set": x}, upsert=True
+            )
+            if os.environ.get("DEBUG"):
+                print(f"push to atlas: {x['contenthash']}")
+            collections.create_index(
+                [("contenthash", pymongo.ASCENDING)], unique=True, name="contenthash"
+            )
+            bot.send_message(
+                message["chat"]["id"],
+                "🤖 Added note to atlas: " + x["contenthash"] + " " + str(upd_rst),
+                reply_to_message_id=message["message_id"],
+            )
+            push_channel(
+                {
+                    x["from"]: [x],
+                },
+                os.getenv("MONGODB_ATLAS_URI"),
+                os.environ.get("NEODB_TOKEN"),
+                tele_token,
+                os.environ.get("report_channel"),
+            )
+            return "🤖 Added note to atlas: " + x["contenthash"] + " " + str(upd_rst)
+
+        except Exception as e:
+            bot.send_message(
+                message["chat"]["id"],
+                "🤖 Invalid JSON format," +str(e)  + " copy the template below and edit it\n\n" + TEMP_JSON,
+                reply_to_message_id=message["message_id"],
+            )
+            print(
+                "🤖 Invalid JSON format," +str(e)  + " copy the template below and edit it\n\n" + TEMP_JSON
+            )
+            print(traceback.format_exc())
+            return "🤖 Invalid JSON format: " + raw_text
 
     # 命令处理器
     if bot and "text" in message and message["text"].startswith("/"):
