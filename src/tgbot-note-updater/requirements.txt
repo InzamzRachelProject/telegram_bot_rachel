@@ -3,3 +3,4 @@ pymongo[srv]
 requests==2.25.1 
 pillow
 opencc-python-reimplemented
+cos-python-sdk-v5
