@@ -1,0 +1,5 @@
+pyTelegramBotAPI==4.23.0
+pymongo[srv] 
+requests==2.25.1 
+pillow
+opencc-python-reimplemented
