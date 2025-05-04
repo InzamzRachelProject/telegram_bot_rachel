@@ -70,7 +70,7 @@ def get_image_size(image_path):
 import opencc
 
 # 初始化简繁转换器，繁体转简体
-converter = opencc.OpenCC('t2s.json')
+converter = opencc.OpenCC('t2s')
 
 def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_uri):
     # 转换角色名到简体中文
