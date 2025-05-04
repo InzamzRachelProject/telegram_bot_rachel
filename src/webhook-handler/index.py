@@ -78,6 +78,33 @@ TEMP_JSON = """{
     "type": 1
 }"""
 
+
+TEMP_JSON_CHAR = """{
+  "images": {
+    "large": "https://lain.bgm.tv/pic/crt/l/80/4a/53767_crt_iatMC.jpg?r=1646570423"
+  },
+  "name": "堀北鈴音",
+  "relation": "主角",
+  "actors": [
+    {
+      "images": {
+        "large": "https://lain.bgm.tv/pic/crt/l/a1/78/19339_prsn_3Dg35.jpg?r=1694799715"
+      },
+      "name": "鬼頭明里",
+      "short_summary": "鬼頭明里（きとう あかり）は、日本の女性声優である。ラクーンドッグ所属。\r\nあだ名は「あかりん」。\r\n\r\n10月16日生まれ、愛知県出身、血液型B型、153cm。プロ・フィット声優養成所を経て、現事務所に2015年4月から所属。\r\n趣味は絵を描くこと、歌うこと。特技は絵を描くこと、歌うこと、湯切り。",
+      "career": [
+        "artist",
+        "seiyu"
+      ],
+      "id": 19339,
+      "type": 1,
+      "locked": false
+    }
+  ],
+  "type": 1,
+  "from": "欢迎来到实力至上主义的教室"
+}"""
+
 r = redis.from_url(os.getenv("REDIS_URL"))
 
 def get_character_link(speaker: str) -> str:
@@ -157,78 +184,16 @@ def main_handler(event, context):
         print(f"book_name: {book_name}, reply_msg_info: ", reply_msg_info, flush=True)
         dbBooksNotes = client.get_database("BooksNotes")
 
-        collections = dbBooksNotes.get_collection(book_name)
-        # print("collections {}".format(collections), flush=True)
-
-        content_hash_list = []
-        for note in collections.find():
-            # print(note, flush=True)
-            preview_url = None
-            content_hash_list.append(note["hash"])
-            if note["hash"] in reply_msg_info.keys():
-                print("match hash: ", note["hash"], flush=True)
-                continue
-            text_parts = [f"📚 {note['content']}"]
-            if note.get("speaker", None) != None:
-                speaker_charactor_link = get_character_link(note["speaker"])
-                print("speaker_charactor_link: ", speaker_charactor_link)
-                text_parts.append(f"🎙️ {note['speaker']}")
-                if speaker_charactor_link != "":
-                    preview_url = speaker_charactor_link
-            if note.get("character_comment", None) != None:
-                comment_character_link = get_character_link(note["character_comment"])
-                print("comment_character_link: ", comment_character_link)
-                text_parts.append(f"⚖️ {note['character_comment']}")
-                if comment_character_link != "":
-                    preview_url = comment_character_link
-            if note.get("note", None) != None and note["note"].strip() != "":
-                text_parts.append(f"💬 {note['note']}")
-            text = "\n".join(text_parts).replace("&", "&amp;")
-            print("preview_url: ", preview_url, flush=True)
-            if note["hash"] in reply_msg_info.keys():
-                print("edit_message_text: ", edit_message_text)
-                bot.edit_message_text(
-                    text,
-                    chat_group,
-                    reply_msg_info[note["hash"]],
-                    parse_mode="HTML",
-                    link_preview_options=telebot.types.LinkPreviewOptions(
-                        url=preview_url,
-                        prefer_small_media=True,
-                        show_above_text=True,
-                    ),
-                )
-                time.sleep(1)
-            else:
-                ret = bot.send_message(
-                    chat_group,
-                    text,
-                    reply_to_message_id=chat_group_message_id,
-                    parse_mode="HTML",
-                    link_preview_options=telebot.types.LinkPreviewOptions(
-                        url=preview_url,
-                        prefer_small_media=True,
-                        show_above_text=True,
-                    ),
-                )
-                print("ret: ", ret, flush=True)
-                reply_msg_info[note["hash"]] = ret.message_id
-                time.sleep(1)
-                print("reply_msg_info after update: ", reply_msg_info, flush=True)
-            msg_config.update_one(
-                {"channel_message_id": forward_from_message_id},
-                {"$set": {"reply_msg_info": reply_msg_info}},
-            )
-        reply_msg_info = msg_config.find_one(
-            {"channel_message_id": forward_from_message_id}
-        )["reply_msg_info"]
-        for content_hash in reply_msg_info.keys():
-            if content_hash not in content_hash_list:
-                bot.delete_message(chat_group, reply_msg_info[content_hash])
-                msg_config.update_one(
-                    {"channel_message_id": forward_from_message_id},
-                    {"$unset": {"reply_msg_info." + content_hash: ""}},
-                )
+        msg_config.update_one(
+            {"channel_message_id": forward_from_message_id},
+            {
+                "$set": {
+                    "reply_msg_info": reply_msg_info, 
+                    "chat_group_message_id": chat_group_message_id,
+                    "chat_group": chat_group,
+                }
+            },
+        )
         break
 
     # 处理新加的 /add_note 命令
@@ -268,9 +233,37 @@ def main_handler(event, context):
             db = client.get_database("BooksNotes")
             collections = db.get_collection(x["from"])
             print("collections" + str(collections), flush=True)
-            x["contenthash"] = md5(x["content"].encode("utf-8")).hexdigest()
-            x["hash"] = "0"
-            x["hash"] = md5(x["content"].encode("utf-8")).hexdigest()
+            
+            content = x["content"]
+            contenthash = md5(content.encode("utf-8")).hexdigest()
+            x["contenthash"] = contenthash
+        
+            # 创建临时对象用于哈希计算（排除hash和sync_flag字段）
+            temp_obj = {k: v for k, v in x.items() if k not in ('hash', 'sync_flag')}
+            temp_obj['hash'] = '0'  # 设置临时哈希值
+            
+            # 计算完整对象哈希
+            json_str = json.dumps(temp_obj, sort_keys=True).encode('utf-8')
+            new_hash = md5(json_str).hexdigest()
+            x['hash'] = new_hash
+            # 查询数据库中的现有记录
+            existing = collections.find_one({"contenthash": contenthash})
+        
+            # 处理同步标志逻辑
+            if existing:
+                # 当哈希值变化时设置同步标志
+                if existing.get('hash') != new_hash:
+                    x['sync_flag'] = 1
+                    print("sync_flag set 1", flush=True)
+                else:
+                    # 保留原有同步标志值
+                    x['sync_flag'] = existing.get('sync_flag', 0)
+                    print("sync_flag set 0", flush=True)
+            else:
+                # 新记录默认需要同步
+                x['sync_flag'] = 1
+                print("sync_flag set 1", flush=True)
+
             # print(f"note: {str(x)}")
             upd_rst = collections.update_one(
                 {"contenthash": x["contenthash"]}, {"$set": x}, upsert=True
@@ -284,15 +277,6 @@ def main_handler(event, context):
                 message["chat"]["id"],
                 "🤖 Added note to atlas: " + x["contenthash"] + " " + str(upd_rst),
                 reply_to_message_id=message["message_id"],
-            )
-            push_channel(
-                {
-                    x["from"]: [x],
-                },
-                os.getenv("MONGODB_ATLAS_URI"),
-                os.environ.get("NEODB_TOKEN"),
-                tele_token,
-                os.environ.get("report_channel"),
             )
             return "🤖 Added note to atlas: " + x["contenthash"] + " " + str(upd_rst)
 
@@ -308,6 +292,163 @@ def main_handler(event, context):
             print(traceback.format_exc())
             return "🤖 Invalid JSON format: " + raw_text
 
+    # 处理新加的 /add_charactor 命令
+    elif (
+        bot
+        and "text" in message
+        and "entities" in message
+        and message["text"].startswith("/add_charactor")
+    ):
+        bot = telebot.TeleBot(tele_token)
+        raw_text = message["text"].replace("/add_charactor", "").strip()
+        raw_text = raw_text.replace('\\"', '"')
+        try:
+            print("raw_text: ", raw_text, flush=True)
+            x = json.loads(raw_text)
+            # 检查必填字段
+            if not x.get("name"):
+                raise ValueError("Missing required field 'name'")
+            if not x.get("from"):
+                raise ValueError("Missing required field 'from'")
+            if not x.get("images") or not isinstance(x["images"], dict) or not x["images"].get("large"):
+                raise ValueError("Missing required field 'images.large'")
+            
+            client = MongoClient(os.getenv("MONGODB_ATLAS_URI"))
+            db = client.get_database("ExtraCharactor")
+            collection = db.get_collection(x["from"])
+
+            # ========== 新增数据清洗逻辑 ==========
+            def cleanup_duplicates(col):
+                """
+                清理重复的 name+from 组合，保留最新（最大id）的记录
+                返回清理的文档数量
+                """
+                pipeline = [
+                    {"$group": {
+                        "_id": {"name": "$name", "from": "$from"},
+                        "dups": {"$push": "$_id"},
+                        "maxId": {"$max": "$id"},
+                        "count": {"$sum": 1}
+                    }},
+                    {"$match": {"count": {"$gt": 1}}}
+                ]
+                
+                deleted_count = 0
+                for group in col.aggregate(pipeline):
+                    # 删除除最大id之外的所有文档
+                    delete_filter = {
+                        "_id": {"$in": group["dups"]},
+                        "id": {"$ne": group["maxId"]}
+                    }
+                    result = col.delete_many(delete_filter)
+                    deleted_count += result.deleted_count
+                    print(f"Cleaned {result.deleted_count} duplicates for {group['_id']}")
+                return deleted_count
+
+            # 先执行数据清洗再创建索引
+            try:
+                # 尝试创建唯一索引（可能因重复数据失败）
+                collection.create_index(
+                    [("name", pymongo.ASCENDING), ("from", pymongo.ASCENDING)],
+                    unique=True,
+                    name="name_from_unique"
+                )
+            except pymongo.errors.OperationFailure as e:
+                if "duplicate key" in str(e):
+                    print("Detected duplicate data, starting cleanup...")
+                    cleaned = cleanup_duplicates(collection)
+                    print(f"Cleaned {cleaned} duplicate documents")
+                    # 重试创建索引
+                    collection.create_index(
+                        [("name", pymongo.ASCENDING), ("from", pymongo.ASCENDING)],
+                        unique=True,
+                        name="name_from_unique"
+                    )
+                else:
+                    raise
+            # ========== 清洗逻辑结束 ==========
+
+            # 检查现有文档（使用清洗后的数据）
+            existing_doc = collection.find_one({"name": x["name"], "from": x["from"]})
+            
+            # ID处理逻辑
+            if existing_doc:
+                # 强制使用现有ID（防止脏数据残留）
+                x["id"] = existing_doc["id"]
+                print(f"Updating existing entry ID: {x['id']}")
+            else:
+                if "id" not in x:
+                    # 更安全的ID生成方式（考虑并发情况）
+                    max_id_doc = collection.find_one(
+                        sort=[("id", pymongo.DESCENDING)],
+                        projection={"id": 1}
+                    )
+                    new_id = max_id_doc["id"] + 1 if max_id_doc else 1
+                    
+                    # 防止ID冲突的回溯机制
+                    while collection.count_documents({"id": new_id}, limit=1) > 0:
+                        new_id += 1
+                    x["id"] = new_id
+            
+            # 使用替换模式更新（替换整个文档）
+            result = collection.replace_one(
+                {"id": x["id"]},
+                x,
+                upsert=True
+            )
+            
+            # 确保ID索引存在
+            if "id" not in collection.index_information():
+                collection.create_index(
+                    [("id", pymongo.ASCENDING)],
+                    unique=True,
+                    name="id"
+                )
+
+            # 构造响应消息
+            action = "更新" if result.matched_count > 0 else "添加"
+            reply_msg = f"🤖 成功{action}角色，ID: {x['id']} (匹配: {result.matched_count}, 修改: {result.modified_count})"
+            bot.send_message(
+                message["chat"]["id"],
+                reply_msg,
+                reply_to_message_id=message["message_id"],
+            )
+            return reply_msg
+            
+        except pymongo.errors.DuplicateKeyError as e:
+            error_msg = f"🤖 数据冲突：请检查以下字段的唯一性：\n- ID: {x.get('id')}\n- 名称: {x['name']}\n- 来源: {x['from']}\n错误详情：{str(e)}"
+            bot.send_message(
+                message["chat"]["id"],
+                error_msg,
+                reply_to_message_id=message["message_id"],
+            )
+            return error_msg
+        # ... 其他异常处理保持不变 ...
+        except json.JSONDecodeError as e:
+            error_msg = f"🤖 JSON解析错误：{str(e)}\n请检查JSON格式并参考示例模板。\n{TEMP_JSON_CHAR}"
+            bot.send_message(
+                message["chat"]["id"],
+                error_msg,
+                reply_to_message_id=message["message_id"],
+            )
+            return error_msg
+        except ValueError as e:
+            error_msg = f"🤖 数据验证失败：{str(e)}\n{TEMP_JSON_CHAR}"
+            bot.send_message(
+                message["chat"]["id"],
+                error_msg,
+                reply_to_message_id=message["message_id"],
+            )
+            return error_msg
+        except Exception as e:
+            error_msg = f"🤖 处理请求时发生错误：{str(e)}"
+            bot.send_message(
+                message["chat"]["id"],
+                error_msg,
+                reply_to_message_id=message["message_id"],
+            )
+            print(traceback.format_exc())
+            return error_msg
     # 命令处理器
     if bot and "text" in message and message["text"].startswith("/"):
         bot = telebot.TeleBot(tele_token)
