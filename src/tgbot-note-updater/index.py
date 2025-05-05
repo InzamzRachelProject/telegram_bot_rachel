@@ -137,7 +137,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
                 for k, v in character_info.items() 
                 if k not in ["avatar"]
             })
-            last_updated = db_char.get("last_updated", datetime.utcnow())
+            last_updated = db_char.get("last_updated", datetime.utcnow().timestamp())
         elif anime_id:
             # 调用 BGM API 获取数据
             url = f"https://api.bgm.tv/v0/subjects/{anime_id}/characters"
@@ -152,7 +152,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
             for result in resp.json():
                 if converter.convert(result["name"]) == converted_character_name:
                     character_info["avatar"] = result["images"]["large"]
-                    last_updated = datetime.utcnow()
+                    last_updated = datetime.utcnow().timestamp()
                     character_info["last_updated"] = last_updated
                     # ==== 新增 MongoDB 更新逻辑 ====
                     try:
@@ -167,7 +167,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
                                 "source": book_name,
                                 "group": collection_name,
                                 "images": result["images"],
-                                "last_updated": datetime.utcnow()
+                                "last_updated": datetime.utcnow().timestamp()
                             }},
                             upsert=True
                         )
@@ -211,7 +211,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
         )
         character_info["card_url"] = (
             f"https://char.misaka19614.com/profile/userId/{uid}"
-            f"?random={int(last_updated.timestamp())}"
+            f"?random={int(last_updated)}"
         )
 
     except Exception as e:
