@@ -137,7 +137,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
                 for k, v in character_info.items() 
                 if k not in ["avatar"]
             })
-            last_updated = db_char.get("last_updated", datetime.utcnow().timestamp())
+            last_updated = float(db_char.get("last_updated", datetime.utcnow().timestamp()))
         elif anime_id:
             # 调用 BGM API 获取数据
             url = f"https://api.bgm.tv/v0/subjects/{anime_id}/characters"
