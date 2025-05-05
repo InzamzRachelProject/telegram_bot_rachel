@@ -314,8 +314,8 @@ def main_handler(event, context):
                 raise ValueError("Missing required field 'images.large'")
             
             client = MongoClient(os.getenv("MONGODB_ATLAS_URI"))
-            db = client.get_database("ExtraCharactor")
-            collection = db.get_collection(x["from"])
+            db = client.get_database("CharacterProfiles")
+            collection = db.get_collection('default')
 
             # ========== 新增数据清洗逻辑 ==========
             def cleanup_duplicates(col):
@@ -381,14 +381,21 @@ def main_handler(event, context):
                     # 更安全的ID生成方式（考虑并发情况）
                     max_id_doc = collection.find_one(
                         sort=[("id", pymongo.DESCENDING)],
-                        projection={"id": 1}
+                        projection={"id": 0}
                     )
-                    new_id = max_id_doc["id"] + 1 if max_id_doc else 1
+                    # 防止部分老数据没有id字段
+                    try:
+                        new_id = max_id_doc["id"] + 1 if max_id_doc else 1
+                    except KeyError:
+                        new_id = 1
                     
                     # 防止ID冲突的回溯机制
                     while collection.count_documents({"id": new_id}, limit=1) > 0:
                         new_id += 1
                     x["id"] = new_id
+                    
+            last_updated = time.time()
+            x["last_updated"] = last_updated
             
             # 使用替换模式更新（替换整个文档）
             result = collection.replace_one(
@@ -401,7 +408,6 @@ def main_handler(event, context):
             if "id" not in collection.index_information():
                 collection.create_index(
                     [("id", pymongo.ASCENDING)],
-                    unique=True,
                     name="id"
                 )
 

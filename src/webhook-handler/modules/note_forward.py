@@ -207,7 +207,7 @@ def get_character_info_from_bgm(character, bookname):
     response_json = requests.get(url, headers=headers, stream=False)
     response_json = response_json.json()
     print("response_json: ", response_json)
-    time.sleep(1)
+    time.sleep(0.1)
     results = response_json["results"]
     anime_list = response_json["list"]
     if anime_list == None:
