@@ -177,6 +177,8 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
                         print(f"MongoDB update failed: {str(e)}", flush=True)
                     # ==== 结束新增逻辑 ====
                     break
+        else:
+            return None
 
     except IndexError:
         print("Book name format invalid", flush=True)
