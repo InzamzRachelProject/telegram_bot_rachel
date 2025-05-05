@@ -36,7 +36,7 @@ def push_info_to_mongodb(character_info, mongo_uri = os.getenv("MONGODB_ATLAS_UR
     db = client.get_database("CharacterProfiles")
     collections = db.get_collection("default")
     collections.update_one(
-        {"name": character_info["name"]}, {"$set": character_info}, upsert=True
+        {"name": character_info["name"], "group": character_info["group"]}, {"$set": character_info}, upsert=True
     )
 
 
@@ -101,13 +101,13 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
         "joinDate": "unknown",
         "lastActive": "unknown",
         "gender": "lgbtq",
-        "group": book_name,
     }
 
     try:
         # 获取 MongoDB 集合名称（取书名第一个单词）
         collection_name = book_name.split(maxsplit=1)[0] if " " in book_name else book_name
-        
+        character_info["group"] = collection_name
+
         # 连接 ExtraCharactor 数据库
         client = MongoClient(mongo_uri,
             socketTimeoutMS=30000,
