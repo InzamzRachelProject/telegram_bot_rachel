@@ -314,8 +314,9 @@ def main_handler(event, context):
                 raise ValueError("Missing required field 'images.large'")
             
             client = MongoClient(os.getenv("MONGODB_ATLAS_URI"))
-            db = client.get_database("CharacterProfiles")
-            collection = db.get_collection('default')
+            db = client.get_database("ExtraCharactor")
+            collection_name = x["from"].split(maxsplit=1)[0] if " " in book_name else book_name
+            collection = db.get_collection(collection_name)
 
             # ========== 新增数据清洗逻辑 ==========
             def cleanup_duplicates(col):

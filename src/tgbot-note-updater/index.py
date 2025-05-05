@@ -16,6 +16,7 @@ from pymongo import MongoClient
 from typing import Tuple, List
 from modules.cos_wrapper import upload_file_to_cos
 from PIL import Image
+from urllib.parse import quote
 
 
 def get_character_link(speaker: str) -> str:
@@ -28,12 +29,22 @@ def get_character_link(speaker: str) -> str:
     if speaker_info == None:
         return ""
     return speaker_info.get("card_url", "")
+    
+def push_info_to_mongodb(character_info, mongo_uri = os.getenv("MONGODB_ATLAS_URI")):
+    # print("push_info_to_mongodb character_info: ", character_info)
+    client = MongoClient(mongo_uri, maxPoolSize=10, minPoolSize=5)
+    db = client.get_database("CharacterProfiles")
+    collections = db.get_collection("default")
+    collections.update_one(
+        {"name": character_info["name"]}, {"$set": character_info}, upsert=True
+    )
 
 
 def get_character_info_from_bgm(character, bookname, mongo_uri = os.getenv("MONGODB_ATLAS_URI")):
     try:
         book_name_search_key = bookname.split()[0]
-        print("book_name_search_key: ", book_name_search_key)
+        print("book_name_search_key: ", book_name_search_key, flush=True)
+        print("character: ", character, flush=True)
     
         url = f"https://api.bgm.tv/search/subject/{quote(book_name_search_key)}?type=2&responseGroup=medium"
         headers = {
@@ -42,15 +53,19 @@ def get_character_info_from_bgm(character, bookname, mongo_uri = os.getenv("MONG
             "accept": "application/json",
         }
     
-        print("url: ", url)
+        print("url: ", url, flush=True)
         response_json = requests.get(url, headers=headers, stream=False)
         response_json = response_json.json()
-        print("response_json: ", response_json)
-        time.sleep(0.1)
+        print("response_json: ", response_json, flush=True)
+        time.sleep(0.2)
         results = response_json["results"]
+        print("results: ", results, flush=True)
         anime_list = response_json["list"]
         if anime_list == None:
-            return None
+            character_info = get_character_info_by_anime_id(None, character, bookname, mongo_uri)
+            print("character_info: ", character_info)
+            if character_info != None:
+                return character_info
         for anime in anime_list:
             anime_id = anime["id"]
             character_info = get_character_info_by_anime_id(anime_id, character, bookname, mongo_uri)
@@ -94,7 +109,17 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
         collection_name = book_name.split(maxsplit=1)[0] if " " in book_name else book_name
         
         # 连接 ExtraCharactor 数据库
-        client = MongoClient(mongo_uri, maxPoolSize=10, minPoolSize=5,)
+        client = MongoClient(mongo_uri,
+            socketTimeoutMS=30000,
+            connectTimeoutMS=30000,
+            serverSelectionTimeoutMS=30000,
+            # 自动重试设置
+            retryWrites=True,
+            retryReads=True,
+            # 重试配置
+            maxPoolSize=50,
+            waitQueueTimeoutMS=100000,
+        )
         db = client.get_database("ExtraCharactor")
         collection = db.get_collection(collection_name)
         
@@ -102,7 +127,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
         db_char = collection.find_one({"name": converted_character_name})
         
         if db_char:
-            print(f"Found character in MongoDB: {db_char['name']}")
+            print(f"Found character in MongoDB: {db_char['name']}", flush=True)
             # 合并数据库中的图像数据
             if "images" in db_char and "large" in db_char["images"]:
                 character_info["avatar"] = db_char["images"]["large"]
@@ -112,7 +137,8 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
                 for k, v in character_info.items() 
                 if k not in ["avatar"]
             })
-        else:
+            last_updated = db_char.get("last_updated", datetime.utcnow())
+        elif anime_id:
             # 调用 BGM API 获取数据
             url = f"https://api.bgm.tv/v0/subjects/{anime_id}/characters"
             headers = {
@@ -126,36 +152,38 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
             for result in resp.json():
                 if converter.convert(result["name"]) == converted_character_name:
                     character_info["avatar"] = result["images"]["large"]
+                    last_updated = datetime.utcnow()
+                    character_info["last_updated"] = last_updated
                     # ==== 新增 MongoDB 更新逻辑 ====
                     try:
-                        with MongoClient(os.getenv("MONGODB_ATLAS_URI"), maxPoolSize=10, minPoolSize=5) as client:
-                            db = client["ExtraCharactor"]
-                            collection = db[collection_name]
-                            
-                            # 更新或插入角色数据
-                            collection.update_one(
-                                {"name": converted_character_name},
-                                {"$set": {
-                                    "name": converted_character_name,
-                                    "source": book_name,
-                                    "images": result["images"],
-                                    "last_updated": datetime.utcnow()
-                                }},
-                                upsert=True
-                            )
-                            print(f"Updated MongoDB record for {converted_character_name}")
+                        db = client["ExtraCharactor"]
+                        collection = db[collection_name]
+                        
+                        # 更新或插入角色数据
+                        collection.update_one(
+                            {"name": converted_character_name},
+                            {"$set": {
+                                "name": converted_character_name,
+                                "source": book_name,
+                                "group": collection_name,
+                                "images": result["images"],
+                                "last_updated": datetime.utcnow()
+                            }},
+                            upsert=True
+                        )
+                        print(f"Updated MongoDB record for {converted_character_name}", flush=True)
                             
                     except Exception as e:
-                        print(f"MongoDB update failed: {str(e)}")
+                        print(f"MongoDB update failed: {str(e)}", flush=True)
                     # ==== 结束新增逻辑 ====
                     break
 
     except IndexError:
-        print("Book name format invalid")
+        print("Book name format invalid", flush=True)
     except pymongo.errors.PyMongoError as e:
-        print(f"MongoDB error: {str(e)}")
+        print(f"MongoDB error: {str(e)}", flush=True)
     except requests.exceptions.RequestException as e:
-        print(f"BGM API error: {str(e)}")
+        print(f"BGM API error: {str(e)}", flush=True)
 
     # 统一处理头像上传
     try:
@@ -183,17 +211,17 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name, mongo_ur
         )
         character_info["card_url"] = (
             f"https://char.misaka19614.com/profile/userId/{uid}"
-            f"?random={int(time.time())}"
+            f"?random={int(last_updated.timestamp())}"
         )
 
     except Exception as e:
-        print(f"Avatar processing failed: {str(e)}")
-        character_info["avatar"] = "https://example.com/fallback.png"
+        print(f"Avatar processing failed: {str(e)}", flush=True)
+        character_info["avatar"] = "https://lain.bgm.tv/img/no_icon_subject.png"
 
-    return character_info if character_info["avatar"] != "https://example.com/fallback.png" else None
+    return character_info if character_info["avatar"] != "https://lain.bgm.tv/img/no_icon_subject.png" else None
 
 
-def sync_messages(bot):
+def sync_messages(bot: telebot.TeleBot, Booknames = None):
     """
     定期同步MongoDB中的笔记数据到Telegram群组
     功能：1.删除不存在消息 2.发送新增消息 3.更新现有消息
@@ -202,10 +230,23 @@ def sync_messages(bot):
     global_start = time.time()
     stage_timings = {}
 
+    if Booknames:
+        print(f"Booknames: {Booknames}")
+
     try:
         # 阶段1：数据库连接
         connect_start = time.time()
-        client = MongoClient(os.getenv("MONGODB_ATLAS_URI"))
+        client = MongoClient(os.getenv("MONGODB_ATLAS_URI"),
+            socketTimeoutMS=30000,
+            connectTimeoutMS=30000,
+            serverSelectionTimeoutMS=30000,
+            # 自动重试设置
+            retryWrites=True,
+            retryReads=True,
+            # 重试配置
+            maxPoolSize=50,
+            waitQueueTimeoutMS=100000,
+        )
         db = client.get_database("BooksNotes")
         msg_config = db.get_collection("MsgToBookname")
         stage_timings["db_connect"] = time.time() - connect_start
@@ -221,6 +262,9 @@ def sync_messages(bot):
             doc_start = time.time()
             doc_id = str(doc['_id'])
             print(f"\n—— 开始处理文档 {doc_id} ——")
+
+            if Booknames and doc.get("book_name") not in Booknames:
+                continue
 
             try:
                 # 阶段3：文档预处理
@@ -296,19 +340,22 @@ def sync_messages(bot):
                         speaker_link = get_character_info_from_bgm(note["speaker"], book_name)
                         text_parts.append(f"🎙️ {note['speaker'].replace('&', '&amp;')}")
                         if speaker_link:
-                            preview_url = speaker_link
+                            push_info_to_mongodb(speaker_link)
+                            preview_url = speaker_link["card_url"]
 
                     # 处理角色评论
                     if note.get("character_comment"):
                         comment_link = get_character_info_from_bgm(note["character_comment"], book_name)
                         text_parts.append(f"⚖️ {note['character_comment'].replace('&', '&amp;')}")
                         if comment_link:
-                            preview_url = comment_link
+                            push_info_to_mongodb(comment_link)
+                            preview_url = comment_link["card_url"]
 
+                    print(note["sync_flag"], preview_url, note.get('preview_url', None), flush=True)
                     if note["sync_flag"] == 0 and preview_url == note.get('preview_url', None):
-                        print("Skip! ", note["sync_flag"], preview_url, note.get('preview_url', None))
+                        print("Skip! ")
                         continue 
-                    print("note: ", note)
+                    print("note: ", note, flush=True)
                     # 添加笔记
                     if note.get("note") and note["note"].strip():
                         text_parts.append(f"💬 {note['note'].replace('&', '&amp;')}")
@@ -330,19 +377,18 @@ def sync_messages(bot):
                     if existing_msg_id:
                         # === 更新现有消息 ===
                         try:
-                            if note["sync_flag"] != 0:
-                                bot.edit_message_text(
-                                    text=final_text,
-                                    chat_id=chat_group,
-                                    message_id=existing_msg_id,
-                                    parse_mode="HTML",
-                                    link_preview_options=telebot.types.LinkPreviewOptions(
-                                        url=preview_url,
-                                        prefer_small_media=True,
-                                        show_above_text=True
-                                    )
+                            bot.edit_message_text(
+                                text=final_text,
+                                chat_id=chat_group,
+                                message_id=existing_msg_id,
+                                parse_mode="HTML",
+                                link_preview_options=telebot.types.LinkPreviewOptions(
+                                    url=preview_url,
+                                    prefer_small_media=True,
+                                    show_above_text=True
                                 )
-                                print(f"[更新] 已更新消息：{content_hash}")
+                            )
+                            print(f"[更新] 已更新消息：{content_hash}")
                         except Exception as e:
                             book_collection.update_one(
                                 {'contenthash': content_hash},
@@ -352,20 +398,19 @@ def sync_messages(bot):
                     else:
                         # === 发送新消息 ===
                         try:
-                            if note["sync_flag"] != 0:
-                                sent_msg = bot.send_message(
-                                    chat_id=chat_group,
-                                    text=final_text,
-                                    reply_to_message_id=chat_group_msg_id,
-                                    parse_mode="HTML",
-                                    link_preview_options=telebot.types.LinkPreviewOptions(
-                                        url=preview_url,
-                                        prefer_small_media=True,
-                                        show_above_text=True
-                                    )
+                            sent_msg = bot.send_message(
+                                chat_id=chat_group,
+                                text=final_text,
+                                reply_to_message_id=chat_group_msg_id,
+                                parse_mode="HTML",
+                                link_preview_options=telebot.types.LinkPreviewOptions(
+                                    url=preview_url,
+                                    prefer_small_media=True,
+                                    show_above_text=True
                                 )
-                                reply_msg_info[content_hash] = sent_msg.message_id
-                                print(f"[新增] 已发送消息：{content_hash}")
+                            )
+                            reply_msg_info[content_hash] = sent_msg.message_id
+                            print(f"[新增] 已发送消息：{content_hash}")
                         except Exception as e:
                             print(f"[错误] 发送失败 {content_hash}：{str(e)}")
                     send_time = time.time() - send_start
@@ -415,6 +460,15 @@ def main_handler(event, context):
     if not tele_token:
         return "No tele_token found"
 
+    print("Received message: " + json.dumps(event, indent = 2))
+
     bot = telebot.TeleBot(tele_token)
-    sync_messages(bot)
+    booknames = []
+    for bookname in event.get("booknames", []):
+        if bookname:
+            # 将 \uXXXX 转换为 utf-8
+            bookname = re.sub(r"\\u([0-9a-fA-F]{4})", lambda x: chr(int(x.group(1), 16)), bookname)
+            booknames.append(bookname)
+
+    sync_messages(bot, booknames)
     return True

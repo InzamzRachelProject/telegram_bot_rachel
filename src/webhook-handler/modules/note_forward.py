@@ -249,7 +249,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name):
         import opencc
 
         # 初始化简繁转换器，繁体转简体
-        converter = opencc.OpenCC('t2s.json')
+        converter = opencc.OpenCC('t2s')
     except Exception as e:
         print("opencc not found, using default conversion")
         # 使用默认转换器
