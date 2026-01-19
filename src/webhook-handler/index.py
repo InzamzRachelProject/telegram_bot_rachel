@@ -14,7 +14,7 @@ import base64
 import pymongo
 from pymongo import MongoClient
 from typing import Tuple, List
-from modules.ask_ai import pic_generator, askgpt
+from modules.ask_ai import pic_generator, askgpt, chat_with_ai
 from modules.card_maker import send_quote_pic_to_telegram
 from modules.note_forward import push_channel
 SUPPORT_MODULES = [
@@ -508,6 +508,64 @@ def main_handler(event, context):
             photo=pic_url,
             reply_to_message_id=message["message_id"],
         )
+        return "Pic command processed"
+
+    # 处理普通文本消息（非命令），自动调用大模型
+    if (
+        bot
+        and "text" in message
+        and text
+        and not text.startswith("/")
+        and forward_from_chat_id is None
+    ):
+        try:
+            bot = telebot.TeleBot(tele_token)
+            module = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            
+            # 判断模型是否支持
+            if module not in SUPPORT_MODULES:
+                return "Model not supported"
+            
+            # 发送"正在思考"消息
+            resp = bot.send_message(
+                message["chat"]["id"],
+                "Rachel 绞尽脑汁...",
+                reply_to_message_id=message["message_id"],
+            )
+
+            # 调用普通对话函数获取回复
+            # TODO: 之后会从记忆系统获取相关记忆，传入memory参数
+            # memory = get_relevant_memory(str(message["from"]["id"]), text)
+            memory = None  # 占位符：记忆系统会在这里提供相关上下文
+            
+            answer = chat_with_ai(
+                text,
+                module,
+                str(message["from"]["id"]),
+                memory=memory,
+            )
+            
+            # 编辑消息，显示回复
+            bot.edit_message_text(
+                escape_markdown_v2(answer),
+                message["chat"]["id"],
+                resp.message_id,
+                parse_mode="MarkdownV2",
+            )
+            return "Normal message processed with AI"
+        except Exception as e:
+            error_msg = f"处理消息时出错：{str(e)}"
+            print(error_msg, flush=True)
+            print(traceback.format_exc(), flush=True)
+            try:
+                bot.send_message(
+                    message["chat"]["id"],
+                    error_msg,
+                    reply_to_message_id=message["message_id"],
+                )
+            except:
+                pass
+            return "Error processing normal message"
 
     return "Received message: " + json.dumps(message, indent=2)
 
