@@ -534,15 +534,17 @@ def main_handler(event, context):
             )
 
             # 调用普通对话函数获取回复
-            # TODO: 之后会从记忆系统获取相关记忆，传入memory参数
-            # memory = get_relevant_memory(str(message["from"]["id"]), text)
-            memory = None  # 占位符：记忆系统会在这里提供相关上下文
+            # 传递平台和用户ID信息，记忆系统会自动从MemOS获取相关记忆
+            platform = "telegram"
+            platform_user_id = str(message["from"]["id"])
             
             answer = chat_with_ai(
                 text,
                 module,
-                str(message["from"]["id"]),
-                memory=memory,
+                str(message["from"]["id"]),  # user_id用于Redis上下文（保持向后兼容）
+                memory=None,  # 设置为None，让函数自动从MemOS获取
+                platform=platform,
+                platform_user_id=platform_user_id,
             )
             
             # 编辑消息，显示回复
@@ -602,7 +604,11 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
                 reply_to_message_id=message["message_id"],
             )
             answer = f"🤖 {module} \n\n" + askgpt(
-                message["text"][len(command_args[0]) :], module, str(message["from"]["id"]),
+                message["text"][len(command_args[0]) :],
+                module,
+                str(message["from"]["id"]),
+                platform="telegram",
+                platform_user_id=str(message["from"]["id"]),
             )
             bot.edit_message_text(
                 escape_markdown_v2(answer),
@@ -751,8 +757,12 @@ def photo_cmd_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             )  # Set prompt to an empty string if it's not provided
             base64_image = base64.b64encode(photo_response.content).decode("utf-8")
             answer = f"🤖 {module}\n\n" + askgpt(
-                prompt, module, message["from"]["id"],
+                prompt,
+                module,
+                str(message["from"]["id"]),
                 base64_image=base64_image,
+                platform="telegram",
+                platform_user_id=str(message["from"]["id"]),
             )
 
             # Change the answer

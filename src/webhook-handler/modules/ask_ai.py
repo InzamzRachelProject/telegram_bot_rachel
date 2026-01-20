@@ -2,11 +2,12 @@ import os
 import traceback
 import requests
 import re
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 import requests
 import redis
 import json
+from modules.memory import get_relevant_memory_context, save_conversation
 
 r = redis.from_url(os.getenv("REDIS_URL"))
 # Initialize Redis connection
@@ -43,11 +44,23 @@ def apply_memory_context(system_prompt: str, memory: str = None) -> str:
         result = re.sub(r'\n{3,}', '\n\n', result)
         return result.strip()
 
-def askgpt(prompt: str, module: str, user_id: str, base64_image: str = None, memory: str = None) -> str:
+def askgpt(
+    prompt: str,
+    module: str,
+    user_id: str,
+    base64_image: str = None,
+    memory: str = None,
+    platform: str = "telegram",
+    platform_user_id: Optional[str] = None
+) -> str:
+    # 如果platform_user_id未提供，使用user_id作为默认值
+    if platform_user_id is None:
+        platform_user_id = user_id
+    
     url = os.getenv("OPENAI_API_URL")
     allowed_users = os.getenv("ALLOWED_USERS", "").split(',')
     print(f"ALLOWED_USERS: {allowed_users}")
-    print(f"User: {user_id}_call_count, Count: {r.get(user_id)}")
+    print(f"Platform: {platform}, User: {platform_user_id}, User: {user_id}_call_count, Count: {r.get(user_id)}")
     print(f"Ask GPT: {prompt}")
 
     # Limit user's calls by checking redis 
@@ -113,17 +126,41 @@ def askgpt(prompt: str, module: str, user_id: str, base64_image: str = None, mem
     response = requests.post(url, json=payload, headers=headers, stream=False).json()
     
     # Save current context
+    assistant_reply = response["choices"][0]["message"]["content"]
     past_conversation.append(
         {
             "role": "assistant",
-            "content": response["choices"][0]["message"]["content"]
+            "content": assistant_reply
         }
     )
     r.setex(f'{user_id}_context', 7000, json.dumps(past_conversation))
+    
+    # 保存对话到MemOS（只保存文本内容，如果有图片则添加说明）
+    try:
+        user_content = prompt
+        if base64_image:
+            user_content = f"[图片] {prompt}"  # 图片消息添加标记
+        
+        messages_for_memos = [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": assistant_reply}
+        ]
+        save_conversation(platform, platform_user_id, messages_for_memos)
+        print(f"Saved conversation to MemOS for {platform}:{platform_user_id}", flush=True)
+    except Exception as e:
+        print(f"Error saving conversation to MemOS: {str(e)}", flush=True)
+        # 不影响主流程，继续执行
 
-    return  response["choices"][0]["message"]["content"]
+    return assistant_reply
 
-def chat_with_ai(prompt: str, module: str, user_id: str, memory: str = None) -> str:
+def chat_with_ai(
+    prompt: str,
+    module: str,
+    user_id: str,
+    memory: str = None,
+    platform: str = "telegram",
+    platform_user_id: Optional[str] = None
+) -> str:
     """
     普通对话函数，专门处理日常聊天
     强制使用system_prompt，并支持记忆系统
@@ -131,15 +168,21 @@ def chat_with_ai(prompt: str, module: str, user_id: str, memory: str = None) -> 
     Args:
         prompt: 用户输入的消息
         module: 使用的模型
-        user_id: 用户ID
-        memory: 记忆系统提供的相关上下文（可选）
+        user_id: 用户ID（用于Redis上下文存储，保持向后兼容）
+        memory: 记忆系统提供的相关上下文（可选，如果为None则自动从MemOS获取）
+        platform: 平台名称（如 "telegram", "wechat" 等）
+        platform_user_id: 平台用户ID（如果为None，则使用user_id）
     
     Returns:
         AI的回复内容
     """
+    # 如果platform_user_id未提供，使用user_id作为默认值
+    if platform_user_id is None:
+        platform_user_id = user_id
+    
     url = os.getenv("OPENAI_API_URL")
     allowed_users = os.getenv("ALLOWED_USERS", "").split(',')
-    print(f"Chat with AI - User: {user_id}, Prompt: {prompt}", flush=True)
+    print(f"Chat with AI - Platform: {platform}, User: {platform_user_id}, Prompt: {prompt}", flush=True)
     
     # Limit user's calls by checking redis 
     if user_id not in allowed_users:
@@ -148,6 +191,15 @@ def chat_with_ai(prompt: str, module: str, user_id: str, memory: str = None) -> 
             return "You have exceeded the maximum number of calls to this service."
         else:
             r.setex(f"{user_id}_call_count", 7200, 1 if user_count is None else int(user_count) + 1)
+    
+    # 如果没有提供memory，从MemOS自动获取相关记忆
+    if memory is None:
+        try:
+            memory = get_relevant_memory_context(platform, platform_user_id, prompt)
+            print(f"Retrieved memory context: {memory[:100] if memory else 'None'}...", flush=True)
+        except Exception as e:
+            print(f"Error retrieving memory: {str(e)}", flush=True)
+            memory = None
     
     # 强制加载system_prompt
     system_prompt_template = load_system_prompt()
@@ -205,6 +257,19 @@ def chat_with_ai(prompt: str, module: str, user_id: str, memory: str = None) -> 
     
     # 保存到Redis（注意：保存时system消息也会被保存，下次调用时会替换）
     r.setex(f'{user_id}_context', 7000, json.dumps(past_conversation))
+    
+    # 保存对话到MemOS（只保存用户消息和AI回复，不包含system消息）
+    try:
+        # 提取用户消息和AI回复用于保存到MemOS
+        messages_for_memos = [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": assistant_reply}
+        ]
+        save_conversation(platform, platform_user_id, messages_for_memos)
+        print(f"Saved conversation to MemOS for {platform}:{platform_user_id}", flush=True)
+    except Exception as e:
+        print(f"Error saving conversation to MemOS: {str(e)}", flush=True)
+        # 不影响主流程，继续执行
     
     return assistant_reply
 
