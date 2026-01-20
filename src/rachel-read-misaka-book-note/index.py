@@ -450,36 +450,56 @@ def handler(event, context):
                 "deleted_count": deleted_count
             }
         
-        # 随机获取一条笔记
-        result = get_random_note(books_notes_db)
-        if not result:
-            logger.info("No notes found to process")
-            return {"message": "No notes found to process"}
+        # 循环尝试获取需要同步的笔记，最多尝试20次
+        max_attempts = 20
+        attempted_hashes = set()  # 记录已尝试过的contenthash，避免重复尝试
         
-        book_name, note = result
+        for attempt in range(max_attempts):
+            # 随机获取一条笔记
+            result = get_random_note(books_notes_db)
+            if not result:
+                logger.info("No notes found to process")
+                return {"message": "No notes found to process"}
+            
+            book_name, note = result
+            contenthash = note.get("contenthash", "")
+            
+            # 如果已经尝试过这条笔记，跳过
+            if contenthash in attempted_hashes:
+                continue
+            
+            attempted_hashes.add(contenthash)
+            
+            # 打印mongo原始数据
+            logger.info(f"Mongo note data: {json.dumps(note, ensure_ascii=False, indent=2, default=str)}")
+            
+            # 检查是否需要同步
+            if not check_note_should_sync(note, sync_config_collection):
+                logger.info(f"Note {contenthash} already synced and up to date, trying next one (attempt {attempt + 1}/{max_attempts})")
+                continue  # 继续尝试下一条
+            
+            # 找到需要同步的笔记，添加到 memos
+            memos_result = add_book_note_to_memos(note, book_name)
+            if "error" in memos_result:
+                logger.error(f"Failed to add note to memos: {memos_result['error']}")
+                return {"error": f"Failed to add note to memos: {memos_result['error']}"}
+            
+            # 更新配置库
+            update_sync_config(note, book_name, sync_config_collection)
+            
+            logger.info(f"Successfully synced note {contenthash} from book {book_name}")
+            return {
+                "message": "Note synced successfully",
+                "contenthash": contenthash,
+                "book_name": book_name,
+                "attempts": attempt + 1
+            }
         
-        # 打印mongo原始数据
-        logger.info(f"Mongo note data: {json.dumps(note, ensure_ascii=False, indent=2, default=str)}")
-        
-        # 检查是否需要同步
-        if not check_note_should_sync(note, sync_config_collection):
-            logger.info(f"Note {note.get('contenthash')} already synced and up to date, skipping")
-            return {"message": "Note already synced and up to date, skipping"}
-        
-        # 添加到 memos
-        memos_result = add_book_note_to_memos(note, book_name)
-        if "error" in memos_result:
-            logger.error(f"Failed to add note to memos: {memos_result['error']}")
-            return {"error": f"Failed to add note to memos: {memos_result['error']}"}
-        
-        # 更新配置库
-        update_sync_config(note, book_name, sync_config_collection)
-        
-        logger.info(f"Successfully synced note {note.get('contenthash')} from book {book_name}")
+        # 如果尝试了max_attempts次都没有找到需要同步的笔记
+        logger.info(f"Tried {max_attempts} notes, all appear to be already synced")
         return {
-            "message": "Note synced successfully",
-            "contenthash": note.get('contenthash'),
-            "book_name": book_name
+            "message": "All notes appear to be already synced",
+            "attempts": max_attempts
         }
         
     except Exception as e:
