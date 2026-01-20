@@ -205,6 +205,11 @@ def add_book_note_to_memos(note: Dict, book_name: str) -> Dict:
     # 构建 messages
     # 参考 webhook-handler 中的格式，使用 role 和 content
     content = note.get("content", "")
+    author = note.get("author", "")
+    speaker = note.get("speaker", "")
+    character_comment = note.get("character_comment", "")
+    ref_from = note.get("ref_from", "")
+    ref_author = note.get("ref_author", "")
     
     # 创建去除了tag字段的note副本用于获取评论
     note_without_tags = {k: v for k, v in note.items() if k not in tag_fields}
@@ -216,10 +221,41 @@ def add_book_note_to_memos(note: Dict, book_name: str) -> Dict:
         "content": "这是用户的书摘"
     }
     
-    # user 消息：包含书摘正文和评论（如果有）
-    user_content = content
+    # user 消息：明确标注这是来自哪个作者哪本书的书摘
+    # 构建书摘来源信息
+    source_parts = []
+    if author:
+        source_parts.append(author)
+    if book_name:
+        source_parts.append(book_name)
+    
+    if source_parts:
+        source_info = "".join(source_parts)
+        user_content = f"这是来自{source_info}的书摘："
+    else:
+        user_content = "这是书摘："
+    
+    # 如果有引用信息，添加引用说明
+    if ref_from:
+        ref_info = f"这部作品引用了{ref_from}"
+        if ref_author:
+            ref_info = f"{ref_info}（作者：{ref_author}）"
+        user_content = f"{user_content}\n{ref_info}"
+    
+    # 如果有speaker，添加角色信息
+    if speaker:
+        user_content = f"{user_content}\n这是角色{speaker}说的话"
+    
+    # 添加书摘内容
+    user_content = f"{user_content}\n\n{content}"
+    
+    # 如果有角色评论，添加角色评论信息
+    if character_comment:
+        user_content = f"{user_content}\n\n这是对这个角色的评论：{character_comment}"
+    
+    # 如果有用户评论，添加用户评论信息
     if comments:
-        user_content = f"{content}\n\n评论：{comments}"
+        user_content = f"{user_content}\n\n我写下了评论：{comments}"
     
     user_message = {
         "role": "user",
