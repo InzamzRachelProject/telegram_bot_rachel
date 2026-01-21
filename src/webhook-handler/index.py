@@ -67,6 +67,11 @@ SUPPORT_MODULES = [
     "gemini-pro-vision",
 ]
 
+CHAT_SUPPORT_MODULES = [
+    "qwen3-max",
+    "qwen-plus-character"
+]
+
 TEMP_JSON = """{
     "author": "衣笠彰梧",
     "chapter": "",
@@ -520,10 +525,10 @@ def main_handler(event, context):
     ):
         try:
             bot = telebot.TeleBot(tele_token)
-            module = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+            model = os.getenv("CHAT_OPENAI_MODEL", "qwen-plus-character")
             
             # 判断模型是否支持
-            if module not in SUPPORT_MODULES:
+            if model not in CHAT_SUPPORT_MODULES:
                 return "Model not supported"
             
             # 发送"正在思考"消息
@@ -540,7 +545,7 @@ def main_handler(event, context):
             
             answer = chat_with_ai(
                 text,
-                module,
+                model,
                 str(message["from"]["id"]),  # user_id用于Redis上下文（保持向后兼容）
                 memory=None,  # 设置为None，让函数自动从MemOS获取
                 platform=platform,

@@ -180,7 +180,7 @@ def chat_with_ai(
     if platform_user_id is None:
         platform_user_id = user_id
     
-    url = os.getenv("OPENAI_API_URL")
+    url = os.getenv("CHAT_OPENAI_API_URL")
     allowed_users = os.getenv("ALLOWED_USERS", "").split(',')
     print(f"Chat with AI - Platform: {platform}, User: {platform_user_id}, Prompt: {prompt}", flush=True)
     
@@ -242,7 +242,7 @@ def chat_with_ai(
         "stream": False,
         "max_tokens": 2048,
     }
-    headers = {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")}
+    headers = {"Authorization": "Bearer " + os.getenv("CHAT_OPENAI_API_KEY")}
     
     response = requests.post(url, json=payload, headers=headers, stream=False).json()
     
