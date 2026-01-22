@@ -28,21 +28,28 @@ def load_system_prompt() -> str:
     # 如果加载失败，返回默认提示词
     return "You are an awesome chatbot\n\n{memory_context}"
 
-def apply_memory_context(system_prompt: str, memory: str = None) -> str:
+def apply_context(system_prompt: str, memory: str = None, chat_info: str = None) -> str:
     """应用记忆上下文到system prompt中"""
     memory_placeholder = "{memory_context}"
+    chat_info_placeholder = "{chat_info}"
     
     if memory and memory.strip():
         # 如果有记忆内容，替换占位符
         memory_text = f"\n\n相关记忆信息：\n{memory.strip()}"
-        return system_prompt.replace(memory_placeholder, memory_text)
+        result = system_prompt.replace(memory_placeholder, memory_text)
     else:
         # 如果没有记忆内容，移除占位符及其前后的空行
         # 先移除占位符
         result = system_prompt.replace(memory_placeholder, "")
         # 清理多余的空行（最多保留一个空行）
         result = re.sub(r'\n{3,}', '\n\n', result)
-        return result.strip()
+
+    if chat_info and chat_info.strip():
+        result = result.replace(chat_info_placeholder, chat_info)
+    else:
+        result = result.replace(chat_info_placeholder, "")
+
+    return result.strip()
 
 def askgpt(
     prompt: str,
@@ -201,9 +208,14 @@ def chat_with_ai(
             print(f"Error retrieving memory: {str(e)}", flush=True)
             memory = None
     
+    if user_id == "1470074308":
+        chat_info = "现在与你对话的是 Misaka19614"
+    else:
+        chat_info = None
+    
     # 强制加载system_prompt
     system_prompt_template = load_system_prompt()
-    system_prompt = apply_memory_context(system_prompt_template, memory)
+    system_prompt = apply_context(system_prompt_template, memory, chat_info)
     
     # 获取之前的对话历史
     past_conversation_raw = r.get(f'{user_id}_context')
