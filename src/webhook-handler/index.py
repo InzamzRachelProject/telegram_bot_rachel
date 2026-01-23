@@ -5,6 +5,7 @@ from http import client
 import json
 import time
 import telebot
+from telebot import types
 import os
 import redis
 import traceback
@@ -17,6 +18,7 @@ from typing import Tuple, List
 from modules.ask_ai import pic_generator, askgpt, chat_with_ai
 from modules.card_maker import send_quote_pic_to_telegram
 from modules.note_forward import push_channel
+from modules.memory import get_all_memory_users
 SUPPORT_MODULES = [
     "gpt-3.5-turbo",
     "gpt-3.5-turbo-0301",
@@ -635,6 +637,55 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
         send_quote_pic_to_telegram(message)
         return 0, "Random quote command exec success"
 
+    # 检查是否是 /memory 命令
+    if command_args[0] == "/memory":
+        # 检查是否是管理员
+        if str(message["from"]["id"]) != os.getenv("tg_admin"):
+            bot.send_message(
+                message["chat"]["id"],
+                "只有管理员可以使用 /memory 命令。",
+                reply_to_message_id=message["message_id"],
+            )
+            return 1, "Only administrators are allowed to use /memory commands."
+        
+        # 获取所有有记忆的用户
+        users = get_all_memory_users()
+        if not users:
+            bot.send_message(
+                message["chat"]["id"],
+                "当前没有用户有记忆记录。",
+                reply_to_message_id=message["message_id"],
+            )
+            return 0, "No memory users found"
+        
+        # 分页设置
+        users_per_page = 20
+        total_pages = (len(users) + users_per_page - 1) // users_per_page
+        current_page = 1
+        
+        # 获取第一页的用户
+        start_idx = 0
+        end_idx = users_per_page
+        page_users = users[start_idx:end_idx]
+        
+        # 构建消息文本
+        message_text = f"有记忆的用户列表 (第 {current_page}/{total_pages} 页，共 {len(users)} 个用户):\n\n"
+        for idx, user in enumerate(page_users, start=1):
+            user_id_str = user.get("user_id", "")
+            message_text += f"{idx}. {user_id_str}\n"
+        
+        # 构建翻页按钮（包含可点击的user_id按钮）
+        keyboard = build_memory_pagination_keyboard(current_page, total_pages, page_users)
+        
+        # 发送带按钮的消息
+        bot.send_message(
+            message["chat"]["id"],
+            message_text,
+            reply_to_message_id=message["message_id"],
+            reply_markup=keyboard
+        )
+        return 0, "Memory command exec success"
+
     # 检查是否是 /rss 命令
     if command_args[0] == "/rss":
         # 检查是否是管理员
@@ -956,6 +1007,75 @@ def list_subscribed_rss_links(chat_id: int) -> Tuple[int, List[str]]:
     finally:
         # 关闭 MongoDB 连接
         client.close()
+
+
+def build_memory_pagination_keyboard(current_page: int, total_pages: int, page_users: List[dict] = None) -> types.InlineKeyboardMarkup:
+    """
+    构建记忆用户列表的翻页键盘，包含可点击的user_id按钮
+    
+    Args:
+        current_page: 当前页码
+        total_pages: 总页数
+        page_users: 当前页的用户列表
+    
+    Returns:
+        内联键盘对象
+    """
+    keyboard = types.InlineKeyboardMarkup()
+    
+    # 添加user_id按钮（每行2个）
+    if page_users:
+        buttons_in_row = []
+        for user in page_users:
+            user_id_str = user.get("user_id", "")
+            if user_id_str:
+                # 限制按钮文本长度（Telegram限制64字符）
+                button_text = user_id_str[:30] if len(user_id_str) > 30 else user_id_str
+                buttons_in_row.append(types.InlineKeyboardButton(
+                    button_text,
+                    callback_data=f"memory_user_{user_id_str}"
+                ))
+                # 每行2个按钮
+                if len(buttons_in_row) == 2:
+                    keyboard.add(*buttons_in_row)
+                    buttons_in_row = []
+        # 如果还有剩余的按钮，单独添加一行
+        if buttons_in_row:
+            keyboard.add(*buttons_in_row)
+    
+    # 第一行：第一页、上一页、下一页、最后一页
+    row1 = []
+    if current_page > 1:
+        row1.append(types.InlineKeyboardButton("⏮ 第一页", callback_data="memory_page_1"))
+        row1.append(types.InlineKeyboardButton("◀ 上一页", callback_data=f"memory_page_{current_page - 1}"))
+    else:
+        row1.append(types.InlineKeyboardButton("⏮ 第一页", callback_data="memory_page_1"))
+        row1.append(types.InlineKeyboardButton("◀ 上一页", callback_data="memory_page_1"))
+    
+    if current_page < total_pages:
+        row1.append(types.InlineKeyboardButton("下一页 ▶", callback_data=f"memory_page_{current_page + 1}"))
+        row1.append(types.InlineKeyboardButton("最后一页 ⏭", callback_data=f"memory_page_{total_pages}"))
+    else:
+        row1.append(types.InlineKeyboardButton("下一页 ▶", callback_data=f"memory_page_{total_pages}"))
+        row1.append(types.InlineKeyboardButton("最后一页 ⏭", callback_data=f"memory_page_{total_pages}"))
+    
+    keyboard.add(*row1)
+    
+    # 第二行：前32页、前16页、前8页、前4页
+    row2 = []
+    for offset in [32, 16, 8, 4]:
+        target_page = max(1, current_page - offset)
+        row2.append(types.InlineKeyboardButton(f"前{offset}页", callback_data=f"memory_page_{target_page}"))
+    keyboard.add(*row2)
+    
+    # 第三行：后4页、后8页、后16页、后32页
+    row3 = []
+    for offset in [4, 8, 16, 32]:
+        target_page = min(total_pages, current_page + offset)
+        row3.append(types.InlineKeyboardButton(f"后{offset}页", callback_data=f"memory_page_{target_page}"))
+    keyboard.add(*row3)
+    
+    return keyboard
 
 
 def escape_markdown_v2(text):

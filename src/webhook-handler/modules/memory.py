@@ -364,3 +364,36 @@ def get_relevant_memory_context(
     """
     memory_result = search_memory(platform, platform_user_id, query, conversation_id)
     return format_memories_for_context(memory_result)
+
+
+def get_all_memory_users() -> List[Dict]:
+    """
+    获取所有有记忆的用户列表
+    
+    Returns:
+        用户列表，每个用户包含 user_id, platform, platform_user_id 等字段
+    """
+    mongo_uri = os.getenv("MONGODB_ATLAS_URI")
+    if not mongo_uri:
+        print("Warning: MONGODB_ATLAS_URI not set, returning empty list", flush=True)
+        return []
+    
+    rachel_db_name = os.environ.get('RACHEL_DATABASE', 'Rachel')
+    
+    try:
+        client = MongoClient(mongo_uri, maxPoolSize=10, minPoolSize=5)
+        db = client.get_database(rachel_db_name)
+        collection = db.get_collection("MemoryUsers")
+        
+        # 获取所有用户，按最后添加记忆的时间倒序排列
+        users = list(collection.find(
+            {},
+            {"user_id": 1, "platform": 1, "platform_user_id": 1, "last_memory_added_at": 1}
+        ).sort("last_memory_added_at", -1))
+        
+        client.close()
+        print(f"Retrieved {len(users)} memory users", flush=True)
+        return users
+    except Exception as e:
+        print(f"Error retrieving memory users: {str(e)}", flush=True)
+        return []
