@@ -648,6 +648,14 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             )
             return 1, "Only administrators are allowed to use /memory commands."
         
+        # 获取页码参数（默认为1）
+        current_page = 1
+        if len(command_args) > 1:
+            try:
+                current_page = int(command_args[1])
+            except ValueError:
+                current_page = 1
+        
         # 获取所有有记忆的用户
         users = get_all_memory_users()
         if not users:
@@ -659,23 +667,23 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             return 0, "No memory users found"
         
         # 分页设置
-        users_per_page = 20
+        users_per_page = 5
         total_pages = (len(users) + users_per_page - 1) // users_per_page
-        current_page = 1
+        current_page = max(1, min(current_page, total_pages))  # 确保页码在有效范围内
         
-        # 获取第一页的用户
-        start_idx = 0
-        end_idx = users_per_page
+        # 获取当前页的用户
+        start_idx = (current_page - 1) * users_per_page
+        end_idx = start_idx + users_per_page
         page_users = users[start_idx:end_idx]
         
         # 构建消息文本
         message_text = f"有记忆的用户列表 (第 {current_page}/{total_pages} 页，共 {len(users)} 个用户):\n\n"
         for idx, user in enumerate(page_users, start=1):
             user_id_str = user.get("user_id", "")
-            message_text += f"{idx}. {user_id_str}\n"
+            message_text += f"{start_idx + idx}. {user_id_str}\n"
         
-        # 构建翻页按钮（包含可点击的user_id按钮）
-        keyboard = build_memory_pagination_keyboard(current_page, total_pages, page_users)
+        # 构建回复键盘（包含user_id按钮和翻页按钮）
+        keyboard = build_memory_reply_keyboard(page_users, current_page, total_pages)
         
         # 发送带按钮的消息
         bot.send_message(
@@ -685,6 +693,101 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             reply_markup=keyboard
         )
         return 0, "Memory command exec success"
+    
+    # 检查是否是 /memory_page 命令（用于翻页）
+    if command_args[0].startswith("/memory_page"):
+        # 检查是否是管理员
+        if str(message["from"]["id"]) != os.getenv("tg_admin"):
+            bot.send_message(
+                message["chat"]["id"],
+                "只有管理员可以使用 /memory_page 命令。",
+                reply_to_message_id=message["message_id"],
+            )
+            return 1, "Only administrators are allowed to use /memory_page commands."
+        
+        # 解析页码
+        page_num = 1
+        # 首先尝试从命令本身解析，如 /memory_page_2
+        try:
+            page_num = int(command_args[0].split("_")[-1])
+        except (ValueError, IndexError):
+            # 如果失败，尝试从参数解析，如 /memory_page 2
+            if len(command_args) > 1:
+                try:
+                    page_num = int(command_args[1])
+                except ValueError:
+                    page_num = 1
+        
+        # 获取所有有记忆的用户
+        users = get_all_memory_users()
+        if not users:
+            bot.send_message(
+                message["chat"]["id"],
+                "当前没有用户有记忆记录。",
+                reply_to_message_id=message["message_id"],
+            )
+            return 0, "No memory users found"
+        
+        # 分页设置
+        users_per_page = 5
+        total_pages = (len(users) + users_per_page - 1) // users_per_page
+        page_num = max(1, min(page_num, total_pages))  # 确保页码在有效范围内
+        
+        # 获取当前页的用户
+        start_idx = (page_num - 1) * users_per_page
+        end_idx = start_idx + users_per_page
+        page_users = users[start_idx:end_idx]
+        
+        # 构建消息文本
+        message_text = f"有记忆的用户列表 (第 {page_num}/{total_pages} 页，共 {len(users)} 个用户):\n\n"
+        for idx, user in enumerate(page_users, start=1):
+            user_id_str = user.get("user_id", "")
+            message_text += f"{start_idx + idx}. {user_id_str}\n"
+        
+        # 构建回复键盘（包含user_id按钮和翻页按钮）
+        keyboard = build_memory_reply_keyboard(page_users, page_num, total_pages)
+        
+        # 发送带按钮的消息
+        bot.send_message(
+            message["chat"]["id"],
+            message_text,
+            reply_to_message_id=message["message_id"],
+            reply_markup=keyboard
+        )
+        return 0, "Memory page command exec success"
+    
+    # 检查是否是 /search_memory 命令
+    if command_args[0] == "/search_memory":
+        # 检查是否是管理员
+        if str(message["from"]["id"]) != os.getenv("tg_admin"):
+            bot.send_message(
+                message["chat"]["id"],
+                "只有管理员可以使用 /search_memory 命令。",
+                reply_to_message_id=message["message_id"],
+                reply_markup=types.ReplyKeyboardRemove()
+            )
+            return 1, "Only administrators are allowed to use /search_memory commands."
+        
+        # 获取 user_id 参数
+        if len(command_args) < 2:
+            bot.send_message(
+                message["chat"]["id"],
+                "用法: /search_memory <user_id>\n例如: /search_memory telegram_123456",
+                reply_to_message_id=message["message_id"],
+                reply_markup=types.ReplyKeyboardRemove()
+            )
+            return 1, "Missing user_id parameter"
+        
+        user_id = command_args[1]
+        
+        # 暂时返回一个简单的消息，并移除键盘
+        bot.send_message(
+            message["chat"]["id"],
+            f"正在搜索用户 {user_id} 的记忆...\n（功能开发中）",
+            reply_to_message_id=message["message_id"],
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        return 0, "Search memory command exec success"
 
     # 检查是否是 /rss 命令
     if command_args[0] == "/rss":
@@ -1009,71 +1112,75 @@ def list_subscribed_rss_links(chat_id: int) -> Tuple[int, List[str]]:
         client.close()
 
 
-def build_memory_pagination_keyboard(current_page: int, total_pages: int, page_users: List[dict] = None) -> types.InlineKeyboardMarkup:
+def build_memory_reply_keyboard(page_users: List[dict] = None, current_page: int = 1, total_pages: int = 1) -> types.ReplyKeyboardMarkup:
     """
-    构建记忆用户列表的翻页键盘，包含可点击的user_id按钮
+    构建记忆用户列表的回复键盘，包含可点击的user_id按钮（最多5个）和翻页按钮
+    点击user_id按钮后会发送 /search_memory user_id 命令
+    点击翻页按钮后会发送 /memory_page_X 命令来刷新键盘
     
     Args:
+        page_users: 用户列表（最多5个）
         current_page: 当前页码
         total_pages: 总页数
-        page_users: 当前页的用户列表
     
     Returns:
-        内联键盘对象
+        回复键盘对象
     """
-    keyboard = types.InlineKeyboardMarkup()
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     
-    # 添加user_id按钮（每行2个）
+    # 添加user_id按钮（最多5个）
     if page_users:
-        buttons_in_row = []
-        for user in page_users:
+        buttons = []
+        for user in page_users[:5]:  # 确保最多5个
             user_id_str = user.get("user_id", "")
             if user_id_str:
+                # 按钮文本为 /search_memory user_id，点击后会发送这个命令
+                button_text = f"/search_memory {user_id_str}"
                 # 限制按钮文本长度（Telegram限制64字符）
-                button_text = user_id_str[:30] if len(user_id_str) > 30 else user_id_str
-                buttons_in_row.append(types.InlineKeyboardButton(
-                    button_text,
-                    callback_data=f"memory_user_{user_id_str}"
-                ))
-                # 每行2个按钮
-                if len(buttons_in_row) == 2:
-                    keyboard.add(*buttons_in_row)
-                    buttons_in_row = []
-        # 如果还有剩余的按钮，单独添加一行
-        if buttons_in_row:
-            keyboard.add(*buttons_in_row)
+                if len(button_text) > 64:
+                    # 如果太长，截断user_id部分
+                    max_user_id_len = 64 - len("/search_memory ")
+                    truncated_user_id = user_id_str[:max_user_id_len]
+                    button_text = f"/search_memory {truncated_user_id}"
+                buttons.append(button_text)
+        
+        # 每行一个按钮
+        for button_text in buttons:
+            keyboard.add(types.KeyboardButton(button_text))
     
-    # 第一行：第一页、上一页、下一页、最后一页
-    row1 = []
-    if current_page > 1:
-        row1.append(types.InlineKeyboardButton("⏮ 第一页", callback_data="memory_page_1"))
-        row1.append(types.InlineKeyboardButton("◀ 上一页", callback_data=f"memory_page_{current_page - 1}"))
-    else:
-        row1.append(types.InlineKeyboardButton("⏮ 第一页", callback_data="memory_page_1"))
-        row1.append(types.InlineKeyboardButton("◀ 上一页", callback_data="memory_page_1"))
-    
-    if current_page < total_pages:
-        row1.append(types.InlineKeyboardButton("下一页 ▶", callback_data=f"memory_page_{current_page + 1}"))
-        row1.append(types.InlineKeyboardButton("最后一页 ⏭", callback_data=f"memory_page_{total_pages}"))
-    else:
-        row1.append(types.InlineKeyboardButton("下一页 ▶", callback_data=f"memory_page_{total_pages}"))
-        row1.append(types.InlineKeyboardButton("最后一页 ⏭", callback_data=f"memory_page_{total_pages}"))
-    
-    keyboard.add(*row1)
-    
-    # 第二行：前32页、前16页、前8页、前4页
-    row2 = []
-    for offset in [32, 16, 8, 4]:
-        target_page = max(1, current_page - offset)
-        row2.append(types.InlineKeyboardButton(f"前{offset}页", callback_data=f"memory_page_{target_page}"))
-    keyboard.add(*row2)
-    
-    # 第三行：后4页、后8页、后16页、后32页
-    row3 = []
-    for offset in [4, 8, 16, 32]:
-        target_page = min(total_pages, current_page + offset)
-        row3.append(types.InlineKeyboardButton(f"后{offset}页", callback_data=f"memory_page_{target_page}"))
-    keyboard.add(*row3)
+    # 添加翻页按钮
+    if total_pages > 1:
+        # 第一行：第一页、上一页、下一页、最后一页
+        row1 = []
+        if current_page > 1:
+            row1.append(types.KeyboardButton("/memory_page_1"))
+            row1.append(types.KeyboardButton(f"/memory_page_{current_page - 1}"))
+        else:
+            row1.append(types.KeyboardButton("/memory_page_1"))
+            row1.append(types.KeyboardButton("/memory_page_1"))
+        
+        if current_page < total_pages:
+            row1.append(types.KeyboardButton(f"/memory_page_{current_page + 1}"))
+            row1.append(types.KeyboardButton(f"/memory_page_{total_pages}"))
+        else:
+            row1.append(types.KeyboardButton(f"/memory_page_{total_pages}"))
+            row1.append(types.KeyboardButton(f"/memory_page_{total_pages}"))
+        
+        keyboard.add(*row1)
+        
+        # 第二行：前32页、前16页、前8页、前4页
+        row2 = []
+        for offset in [32, 16, 8, 4]:
+            target_page = max(1, current_page - offset)
+            row2.append(types.KeyboardButton(f"/memory_page_{target_page}"))
+        keyboard.add(*row2)
+        
+        # 第三行：后4页、后8页、后16页、后32页
+        row3 = []
+        for offset in [4, 8, 16, 32]:
+            target_page = min(total_pages, current_page + offset)
+            row3.append(types.KeyboardButton(f"/memory_page_{target_page}"))
+        keyboard.add(*row3)
     
     return keyboard
 
