@@ -397,3 +397,101 @@ def get_all_memory_users() -> List[Dict]:
     except Exception as e:
         print(f"Error retrieving memory users: {str(e)}", flush=True)
         return []
+
+
+def get_memory_by_user_id(
+    user_id: str,
+    page: int = 1,
+    size: int = 5,
+    include_preference: bool = True,
+    include_tool_memory: bool = True,
+    filter: Optional[Dict] = None,
+) -> Dict:
+    """
+    调用 MemOS 的 /get/memory 接口，按用户 ID 分页获取记忆。
+
+    注意：该接口设计给「master」使用，调用方需要自行做权限控制。
+    """
+    api_key = os.getenv("MEMOS_API_KEY")
+    base_url = os.getenv("MEMOS_BASE_URL", "https://memos.memtensor.cn/api/openmem/v1")
+
+    if not api_key:
+        print("Warning: MEMOS_API_KEY not set, skip get/memory", flush=True)
+        return {"error": "MEMOS_API_KEY not configured"}
+
+    # 参数边界控制
+    page = max(1, int(page) if isinstance(page, int) else 1)
+    size = max(1, min(50, int(size) if isinstance(size, int) else 5))
+
+    data: Dict = {
+        "user_id": user_id,
+        "page": page,
+        "size": size,
+        "include_preference": include_preference,
+        "include_tool_memory": include_tool_memory,
+    }
+    if filter:
+        data["filter"] = filter
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Token {api_key}",
+    }
+
+    url = f"{base_url}/get/memory"
+
+    try:
+        body_str = json.dumps(data, ensure_ascii=False)
+        print(f"[MemOS get/memory] URL: {url}", flush=True)
+        print(f"[MemOS get/memory] Request body: {body_str}", flush=True)
+        response = requests.post(url=url, headers=headers, data=body_str)
+        response.raise_for_status()
+        result = response.json()
+        print(f"[MemOS get/memory] Response: {json.dumps(result, ensure_ascii=False)}", flush=True)
+        return result
+    except Exception as e:
+        print(f"[MemOS get/memory] Error: {str(e)}", flush=True)
+        return {"error": str(e)}
+
+
+def delete_memories(memory_ids: List[str]) -> Dict:
+    """
+    调用 MemOS 的 /delete/memory 接口批量删除记忆。
+
+    注意：该接口设计给「master」使用，调用方需要自行做权限控制。
+    """
+    api_key = os.getenv("MEMOS_API_KEY")
+    base_url = os.getenv("MEMOS_BASE_URL", "https://memos.memtensor.cn/api/openmem/v1")
+
+    if not api_key:
+        print("Warning: MEMOS_API_KEY not set, skip delete/memory", flush=True)
+        return {"error": "MEMOS_API_KEY not configured"}
+
+    # 过滤空 ID
+    memory_ids = [str(mid).strip() for mid in memory_ids if str(mid).strip()]
+    if not memory_ids:
+        return {"error": "empty memory_ids"}
+
+    data = {
+        "memory_ids": memory_ids,
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Token {api_key}",
+    }
+
+    url = f"{base_url}/delete/memory"
+
+    try:
+        body_str = json.dumps(data, ensure_ascii=False)
+        print(f"[MemOS delete/memory] URL: {url}", flush=True)
+        print(f"[MemOS delete/memory] Request body: {body_str}", flush=True)
+        response = requests.post(url=url, headers=headers, data=body_str)
+        response.raise_for_status()
+        result = response.json()
+        print(f"[MemOS delete/memory] Response: {json.dumps(result, ensure_ascii=False)}", flush=True)
+        return result
+    except Exception as e:
+        print(f"[MemOS delete/memory] Error: {str(e)}", flush=True)
+        return {"error": str(e)}

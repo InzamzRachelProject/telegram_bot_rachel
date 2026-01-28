@@ -18,7 +18,11 @@ from typing import Tuple, List
 from modules.ask_ai import pic_generator, askgpt, chat_with_ai
 from modules.card_maker import send_quote_pic_to_telegram
 from modules.note_forward import push_channel
-from modules.memory import get_all_memory_users
+from modules.memory import (
+    get_all_memory_users,
+    get_memory_by_user_id,
+    delete_memories,
+)
 SUPPORT_MODULES = [
     "gpt-3.5-turbo",
     "gpt-3.5-turbo-0301",
@@ -758,36 +762,239 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
     
     # 检查是否是 /search_memory 命令
     if command_args[0] == "/search_memory":
-        # 检查是否是管理员
+        # 只有 master/管理员可以调用记忆相关接口
         if str(message["from"]["id"]) != os.getenv("tg_admin"):
             bot.send_message(
                 message["chat"]["id"],
-                "只有管理员可以使用 /search_memory 命令。",
+                "只有管理员（master）可以使用 /search_memory 命令。",
                 reply_to_message_id=message["message_id"],
-                reply_markup=types.ReplyKeyboardRemove()
+                reply_markup=types.ReplyKeyboardRemove(),
             )
-            return 1, "Only administrators are allowed to use /search_memory commands."
-        
-        # 获取 user_id 参数
+            return 1, "Only master is allowed to use /search_memory commands."
+
+        # 参数：/search_memory <user_id> [page] [size]
         if len(command_args) < 2:
             bot.send_message(
                 message["chat"]["id"],
-                "用法: /search_memory <user_id>\n例如: /search_memory telegram_123456",
+                "用法: /search_memory <user_id> [page] [size]\n例如: /search_memory telegram_123456 1 5",
                 reply_to_message_id=message["message_id"],
-                reply_markup=types.ReplyKeyboardRemove()
+                reply_markup=types.ReplyKeyboardRemove(),
             )
             return 1, "Missing user_id parameter"
-        
+
         user_id = command_args[1]
-        
-        # 暂时返回一个简单的消息，并移除键盘
+
+        # 解析分页参数（page + size），size 主要影响每类返回条数，后续仍会按每类最多2条展示
+        page = 1
+        size = 2  # 默认每类两条
+        if len(command_args) >= 3:
+            try:
+                page = int(command_args[2])
+            except ValueError:
+                page = 1
+        if len(command_args) >= 4:
+            try:
+                size = int(command_args[3])
+            except ValueError:
+                size = 5
+
+        if page < 1:
+            page = 1
+        if size < 1:
+            size = 1
+        if size > 50:
+            size = 50
+
+        # 调用 MemOS /get/memory 接口（size 为每类返回条数上限）
+        result = get_memory_by_user_id(
+            user_id=user_id,
+            page=page,
+            size=size,
+            include_preference=True,
+            include_tool_memory=True,
+        )
+
+        if not isinstance(result, dict) or "error" in result:
+            error_msg = result.get("error") if isinstance(result, dict) else "unknown error"
+            bot.send_message(
+                message["chat"]["id"],
+                f"调用记忆接口失败: {error_msg}",
+                reply_to_message_id=message["message_id"],
+                reply_markup=types.ReplyKeyboardRemove(),
+            )
+            return 1, "Search memory failed"
+
+        data = result.get("data", {}) if isinstance(result, dict) else {}
+
+        # 按类型分别取出列表
+        fact_list = []
+        pref_list = []
+        tool_list = []
+
+        if isinstance(data, dict):
+            raw_fact = data.get("memory_detail_list") or data.get("memory_list") or []
+            raw_pref = data.get("preference_detail_list") or data.get("preference_list") or []
+            raw_tool = data.get("tool_memory_detail_list") or data.get("tool_memory_list") or []
+
+            # 过滤掉没有 ID 的条目（无法删除），并且每类最多保留 2 条，方便检索删除
+            def _normalize_with_limit(items, max_count: int = 2):
+                cleaned = []
+                if not isinstance(items, list):
+                    return cleaned
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    mem_id = str(it.get("id") or it.get("memory_id") or "").strip()
+                    if not mem_id:
+                        continue
+                    cleaned.append(it)
+                    if len(cleaned) >= max_count:
+                        break
+                return cleaned
+
+            fact_list = _normalize_with_limit(raw_fact, 2)
+            pref_list = _normalize_with_limit(raw_pref, 2)
+            tool_list = _normalize_with_limit(raw_tool, 2)
+
+        # 组装一个总列表用于生成删除按钮（最多 6 条）
+        memories: List[dict] = []
+        for it in fact_list:
+            mem = dict(it)
+            mem.setdefault("_memory_type", "fact")
+            memories.append(mem)
+        for it in pref_list:
+            mem = dict(it)
+            mem.setdefault("_memory_type", "preference")
+            memories.append(mem)
+        for it in tool_list:
+            mem = dict(it)
+            mem.setdefault("_memory_type", "tool")
+            memories.append(mem)
+
+        if not memories:
+            bot.send_message(
+                message["chat"]["id"],
+                f"用户 {user_id} 在第 {page} 页没有可展示的记忆（或未返回可删除的记录）。",
+                reply_to_message_id=message["message_id"],
+                reply_markup=types.ReplyKeyboardRemove(),
+            )
+            return 0, "No memories found"
+
+        # 构造展示文本（按照三种类型分别展示；每类最多两条，内容完整）
+        lines: List[str] = []
+        total_pages = data.get("pages")
+        current_page = data.get("current", page)
+        # 使用接口返回的 total 字段作为当前查询可用的总条数信息
+        size_per_type = data.get("total", data.get("size", size))
+        if isinstance(total_pages, int) and total_pages > 0:
+            lines.append(
+                f"用户 {user_id} 的记忆（第 {current_page} / {total_pages} 页，每类最多 {size_per_type} 条）："
+            )
+        else:
+            lines.append(f"用户 {user_id} 的记忆（第 {page} 页，每类最多 {size_per_type} 条）：")
+        lines.append("")
+
+        # 事实记忆：直接输出完整字段 JSON
+        if fact_list:
+            lines.append("【事实记忆（memory_detail_list）】")
+            for idx, mem in enumerate(fact_list, start=1):
+                try:
+                    mem_json = json.dumps(mem, ensure_ascii=False, indent=2)
+                except Exception:
+                    mem_json = str(mem)
+                lines.append(f"{idx}. {mem_json}")
+                lines.append("")  # 空行分隔
+
+        # 偏好记忆：直接输出完整字段 JSON
+        if pref_list:
+            lines.append("【偏好记忆（preference_detail_list）】")
+            for idx, mem in enumerate(pref_list, start=1):
+                try:
+                    mem_json = json.dumps(mem, ensure_ascii=False, indent=2)
+                except Exception:
+                    mem_json = str(mem)
+                lines.append(f"{idx}. {mem_json}")
+                lines.append("")
+
+        # 工具记忆：直接输出完整字段 JSON
+        if tool_list:
+            lines.append("【工具记忆（tool_memory_detail_list）】")
+            for idx, mem in enumerate(tool_list, start=1):
+                try:
+                    mem_json = json.dumps(mem, ensure_ascii=False, indent=2)
+                except Exception:
+                    mem_json = str(mem)
+                lines.append(f"{idx}. {mem_json}")
+                lines.append("")
+
+        message_text = "\n".join(lines)
+
+        # 构建删除/翻页/清空按钮键盘
+        keyboard = build_memory_manage_keyboard(memories, user_id, page, size)
+
         bot.send_message(
             message["chat"]["id"],
-            f"正在搜索用户 {user_id} 的记忆...\n（功能开发中）",
+            message_text,
             reply_to_message_id=message["message_id"],
-            reply_markup=types.ReplyKeyboardRemove()
+            reply_markup=keyboard,
         )
         return 0, "Search memory command exec success"
+
+    # 删除记忆命令 /delete_memory <memory_id> [memory_id2 ...]
+    if command_args[0] == "/delete_memory":
+        if str(message["from"]["id"]) != os.getenv("tg_admin"):
+            bot.send_message(
+                message["chat"]["id"],
+                "只有管理员（master）可以使用 /delete_memory 命令。",
+                reply_to_message_id=message["message_id"],
+            )
+            return 1, "Only master is allowed to use /delete_memory commands."
+
+        if len(command_args) < 2:
+            bot.send_message(
+                message["chat"]["id"],
+                "用法: /delete_memory <memory_id1> [memory_id2 ...]",
+                reply_to_message_id=message["message_id"],
+            )
+            return 1, "Missing memory_ids"
+
+        memory_ids = command_args[1:]
+        result = delete_memories(memory_ids)
+
+        if not isinstance(result, dict) or "error" in result:
+            error_msg = result.get("error") if isinstance(result, dict) else "unknown error"
+            bot.send_message(
+                message["chat"]["id"],
+                f"删除记忆失败: {error_msg}",
+                reply_to_message_id=message["message_id"],
+            )
+            return 1, "Delete memory failed"
+
+        bot.send_message(
+            message["chat"]["id"],
+            f"已请求删除记忆: {', '.join(memory_ids)}",
+            reply_to_message_id=message["message_id"],
+        )
+        # 不移除键盘，以满足「点击删除按钮后其他按钮不会消失」
+        return 0, "Delete memory command exec success"
+
+    # 清空记忆相关按钮键盘
+    if command_args[0] == "/clear_memory_keyboard":
+        if str(message["from"]["id"]) != os.getenv("tg_admin"):
+            bot.send_message(
+                message["chat"]["id"],
+                "只有管理员（master）可以清空记忆操作按钮。",
+                reply_to_message_id=message["message_id"],
+            )
+            return 1, "Only master is allowed to clear memory keyboard."
+
+        bot.send_message(
+            message["chat"]["id"],
+            "已清空记忆操作按钮。",
+            reply_to_message_id=message["message_id"],
+            reply_markup=types.ReplyKeyboardRemove(),
+        )
+        return 0, "Clear memory keyboard command exec success"
 
     # 检查是否是 /rss 命令
     if command_args[0] == "/rss":
@@ -1182,6 +1389,48 @@ def build_memory_reply_keyboard(page_users: List[dict] = None, current_page: int
             row3.append(types.KeyboardButton(f"/memory_page_{target_page}"))
         keyboard.add(*row3)
     
+    return keyboard
+
+
+def build_memory_manage_keyboard(
+    memories: List[dict],
+    user_id: str,
+    page: int,
+    size: int,
+) -> types.ReplyKeyboardMarkup:
+    """
+    为 /search_memory 结果构建管理键盘：
+    - 每条记忆一个删除按钮：/delete_memory <memory_id>
+    - 一行刷新 & 翻页按钮：/search_memory <user_id> <page> <size> 等
+    - 底部一个清空按钮：/clear_memory_keyboard
+    """
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
+
+    # 为每条有 ID 的记忆生成删除按钮（数量与展示条数一致）
+    for mem in memories:
+        mem_id = str(mem.get("id") or mem.get("memory_id") or "").strip()
+        if not mem_id:
+            continue
+        # 文本形如：/delete_memory 123456
+        btn_text = f"/delete_memory {mem_id}"
+        # Telegram 按钮文本最长 64 字符，这里一般不会超，但仍做保护
+        if len(btn_text) > 64:
+            btn_text = btn_text[:64]
+        keyboard.add(types.KeyboardButton(btn_text))
+
+    # 刷新按钮：重复当前命令
+    refresh_btn = types.KeyboardButton(f"/search_memory {user_id} {page} {size}")
+
+    # 翻页按钮：上一页 / 下一页，始终提供，交给业务决定是否有数据
+    prev_page = max(1, page - 1)
+    next_page = page + 1
+    prev_btn = types.KeyboardButton(f"/search_memory {user_id} {prev_page} {size}")
+    next_btn = types.KeyboardButton(f"/search_memory {user_id} {next_page} {size}")
+    keyboard.add( prev_btn, refresh_btn,next_btn)
+
+    # 全局清空按钮
+    keyboard.add(types.KeyboardButton("/clear_memory_keyboard"))
+
     return keyboard
 
 
