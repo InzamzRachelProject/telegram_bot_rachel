@@ -8,6 +8,7 @@ import requests
 import redis
 import json
 from modules.memory import get_relevant_memory_context, save_conversation
+from modules.redis_keys import redis_key
 
 r = redis.from_url(os.getenv("REDIS_URL"))
 # Initialize Redis connection
@@ -67,19 +68,19 @@ def askgpt(
     url = os.getenv("OPENAI_API_URL")
     allowed_users = os.getenv("ALLOWED_USERS", "").split(',')
     print(f"ALLOWED_USERS: {allowed_users}")
-    print(f"Platform: {platform}, User: {platform_user_id}, User: {user_id}_call_count, Count: {r.get(user_id)}")
+    print(f"Platform: {platform}, User: {platform_user_id}, User: {user_id}_call_count, Count: {r.get(redis_key(f'{user_id}_call_count'))}")
     print(f"Ask GPT: {prompt}")
 
     # Limit user's calls by checking redis 
     if user_id not in allowed_users:
-        user_count = r.get(f"{user_id}_call_count")
+        user_count = r.get(redis_key(f"{user_id}_call_count"))
         if user_count is not None and int(user_count) >= os.getenv("MAX_CALLS", 5):
             return "You have exceeded the maximum number of calls to this service."
         else:
-            r.setex(f"{user_id}_call_count", 7200, 1 if user_count is None else int(user_count) + 1)
+            r.setex(redis_key(f"{user_id}_call_count"), 7200, 1 if user_count is None else int(user_count) + 1)
 
     # Get previous context
-    past_conversation = r.get(f'{user_id}_context')
+    past_conversation = r.get(redis_key(f'{user_id}_context'))
     if past_conversation is None:
         system_prompt = load_system_prompt()
         past_conversation = [
@@ -140,7 +141,7 @@ def askgpt(
             "content": assistant_reply
         }
     )
-    r.setex(f'{user_id}_context', 7000, json.dumps(past_conversation))
+    r.setex(redis_key(f'{user_id}_context'), 7000, json.dumps(past_conversation))
     
     # 保存对话到MemOS（只保存文本内容，如果有图片则添加说明）
     try:
@@ -193,11 +194,11 @@ def chat_with_ai(
     
     # Limit user's calls by checking redis 
     if user_id not in allowed_users:
-        user_count = r.get(f"{user_id}_call_count")
+        user_count = r.get(redis_key(f"{user_id}_call_count"))
         if user_count is not None and int(user_count) >= os.getenv("MAX_CALLS", 5):
             return "You have exceeded the maximum number of calls to this service."
         else:
-            r.setex(f"{user_id}_call_count", 7200, 1 if user_count is None else int(user_count) + 1)
+            r.setex(redis_key(f"{user_id}_call_count"), 7200, 1 if user_count is None else int(user_count) + 1)
     
     # 如果没有提供memory，从MemOS自动获取相关记忆
     if memory is None:
@@ -218,7 +219,7 @@ def chat_with_ai(
     system_prompt = apply_context(system_prompt_template, memory, chat_info)
     
     # 获取之前的对话历史
-    past_conversation_raw = r.get(f'{user_id}_context')
+    past_conversation_raw = r.get(redis_key(f'{user_id}_context'))
     
     if past_conversation_raw is None:
         # 如果没有历史对话，创建新的对话列表
@@ -268,7 +269,7 @@ def chat_with_ai(
     })
     
     # 保存到Redis（注意：保存时system消息也会被保存，下次调用时会替换）
-    r.setex(f'{user_id}_context', 7000, json.dumps(past_conversation))
+    r.setex(redis_key(f'{user_id}_context'), 7000, json.dumps(past_conversation))
     
     # 保存对话到MemOS（只保存用户消息和AI回复，不包含system消息）
     try:

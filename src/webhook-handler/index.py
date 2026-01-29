@@ -1,4 +1,5 @@
 # -*- coding: utf8 -*-
+from math import log
 from cgitb import text
 from hashlib import md5
 from http import client
@@ -10,12 +11,14 @@ import os
 import redis
 import traceback
 import requests
+import logging
 import re
 import base64
 import pymongo
 from pymongo import MongoClient
 from typing import Tuple, List
 from modules.ask_ai import pic_generator, askgpt, chat_with_ai
+from modules.redis_keys import redis_key
 from modules.card_maker import send_quote_pic_to_telegram
 from modules.note_forward import push_channel
 from modules.memory import (
@@ -23,6 +26,9 @@ from modules.memory import (
     get_memory_by_user_id,
     delete_memories,
 )
+
+logger = logging.getLogger()
+
 SUPPORT_MODULES = [
     "gpt-3.5-turbo",
     "gpt-3.5-turbo-0301",
@@ -75,6 +81,8 @@ SUPPORT_MODULES = [
 
 CHAT_SUPPORT_MODULES = [
     "qwen3-max",
+    "qwen-plus",
+    "qwen-plus-latest",
     "qwen-plus-character"
 ]
 
@@ -130,11 +138,43 @@ def get_character_link(speaker: str) -> str:
     return speaker_info.get("card_url", "")
 
 
+def handler(event, context):
+    """
+    主处理函数，每次调用随机处理一条笔记
+    
+    支持通过环境变量 CLEAR_SYNC_CONFIG 或 event 参数 clear_sync_config 控制清空配置
+    """
+    try:
+        # 解析 event，如果是 bytes 则先解码为字符串再解析 JSON
+        event_dict = {}
+        if event:
+            if isinstance(event, bytes):
+                try:
+                    event_str = event.decode('utf-8')
+                    event_dict = json.loads(event_str) if event_str else {}
+                except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                    logger.warning(f"Failed to parse event as JSON: {e}, using empty dict")
+                    event_dict = {}
+            elif isinstance(event, str):
+                try:
+                    event_dict = json.loads(event)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse event string as JSON: {e}, using empty dict")
+                    event_dict = {}
+            elif isinstance(event, dict):
+                event_dict = event
+        print("event_dict: ", event_dict, flush=True)
+        return main_handler(event_dict, context)
+    except Exception as e:
+        logger.error(f"Error in handler: {str(e)}", exc_info=True)
+        return {"error": str(e)}
+
 def main_handler(event, context):
     # 对 webhook 进行鉴权
-    if event["headers"]["x-telegram-bot-api-secret-token"] != os.getenv(
-        "telegram_bot_api_secret_token"
-    ):
+    stoken = event.get("headers", {}).get("x-telegram-bot-api-secret-token", None)
+    if stoken == None:
+        stoken = event.get("headers", {}).get("X-Telegram-Bot-Api-Secret-Token", None)
+    if stoken != os.getenv("telegram_bot_api_secret_token"):
         return "Api auth failed"
     print("Received event: " + json.dumps(event))
     tele_token = os.getenv("tele_token")
@@ -144,7 +184,7 @@ def main_handler(event, context):
 
     bot = telebot.TeleBot(tele_token)
     update = json.loads(event["body"].replace('"', '"'))
-    # print("Received message: " + json.dumps(update, indent = 2))
+    print("Received message: " + json.dumps(update, indent = 2))
     message = update.get("message", {})
     forward_from_chat = message.get("forward_from_chat", {})
     forward_from_chat_id = forward_from_chat.get("id", None)
@@ -594,7 +634,7 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
             )
         return 0, "Echo command exec success"
     if command_args[0].startswith("/askgptclear"):
-        r.delete(f'{message["from"]["id"]}_context')
+        r.delete(redis_key(f'{message["from"]["id"]}_context'))
     elif command_args[0].startswith("/askgpt"):
         try:
             module = parse_command_module(
