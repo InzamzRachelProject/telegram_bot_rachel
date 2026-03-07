@@ -207,7 +207,7 @@ def get_character_info_from_bgm(character, bookname):
     response_json = requests.get(url, headers=headers, stream=False)
     response_json = response_json.json()
     print("response_json: ", response_json)
-    time.sleep(1)
+    time.sleep(0.1)
     results = response_json["results"]
     anime_list = response_json["list"]
     if anime_list == None:
@@ -249,7 +249,7 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name):
         import opencc
 
         # 初始化简繁转换器，繁体转简体
-        converter = opencc.OpenCC('t2s.json')
+        converter = opencc.OpenCC('t2s')
     except Exception as e:
         print("opencc not found, using default conversion")
         # 使用默认转换器
@@ -297,13 +297,13 @@ def get_character_info_by_anime_id(anime_id, character_name, book_name):
             return character_info
     return None
 
-def push_info_to_mongodb(character_info, mongo_uri):
-    print("push_info_to_mongodb character_info: ", character_info)
-    client = MongoClient(mongo_uri)
+def push_info_to_mongodb(character_info, mongo_uri = os.getenv("MONGODB_ATLAS_URI")):
+    # print("push_info_to_mongodb character_info: ", character_info)
+    client = MongoClient(mongo_uri, maxPoolSize=10, minPoolSize=5)
     db = client.get_database("CharacterProfiles")
     collections = db.get_collection("default")
     collections.update_one(
-        {"name": character_info["name"]}, {"$set": character_info}, upsert=True
+        {"name": character_info["name"], "group": character_info["group"]}, {"$set": character_info}, upsert=True
     )
 
 def push_tag_info_to_mongodb(item, mongo_uri):

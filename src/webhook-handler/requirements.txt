@@ -1,0 +1,10 @@
+openai==0.28.1
+pyTelegramBotAPI==4.23.0
+pymongo[srv]
+requests==2.25.1
+pillow
+redis
+dotenv
+beautifulsoup4
+opencc-python-reimplemented
+cos-python-sdk-v5

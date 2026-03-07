@@ -9,3 +9,5 @@ env
 
 # MacOS
 .DS_Store
+
+**/dep/**
