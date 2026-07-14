@@ -26,6 +26,7 @@ from modules.memory import (
     get_memory_by_user_id,
     delete_memories,
 )
+from modules.score import handle_score_callback, handle_score_command
 
 logger = logging.getLogger()
 
@@ -183,9 +184,50 @@ def main_handler(event, context):
         return "No tele_token found"
 
     bot = telebot.TeleBot(tele_token)
-    update = json.loads(event["body"].replace('"', '"'))
-    print("Received message: " + json.dumps(update, indent = 2))
+
+    # 解析 webhook body（兼容 str / dict / base64）
+    raw_body = event.get("body", "{}")
+    if event.get("isBase64Encoded") and isinstance(raw_body, str):
+        raw_body = base64.b64decode(raw_body).decode("utf-8")
+    if isinstance(raw_body, dict):
+        update = raw_body
+    elif isinstance(raw_body, (bytes, bytearray)):
+        update = json.loads(raw_body.decode("utf-8"))
+    else:
+        update = json.loads(str(raw_body))
+    print("Received update: " + json.dumps(update, indent=2, ensure_ascii=False), flush=True)
+
+    # Inline 积分按钮
+    callback_query = update.get("callback_query")
+    if callback_query:
+        data = callback_query.get("data") or ""
+        print(f"callback_query data={data!r}", flush=True)
+        if data.startswith("score:"):
+            from_id = str(callback_query.get("from", {}).get("id", "")).strip()
+            admin_id = str(os.getenv("tg_admin", "")).strip()
+            if from_id != admin_id:
+                try:
+                    bot.answer_callback_query(
+                        callback_query.get("id"),
+                        text="仅管理员可用",
+                        show_alert=True,
+                    )
+                except Exception:
+                    pass
+                return "Score callback forbidden"
+            ret, msg = handle_score_callback(callback_query, bot)
+            print(f"score callback result: ret={ret} msg={msg}", flush=True)
+            return msg if ret == 0 else f"Score callback failed: {msg}"
+        try:
+            bot.answer_callback_query(callback_query.get("id"))
+        except Exception:
+            pass
+        return "Ignored non-score callback"
+
     message = update.get("message", {})
+    if not message:
+        return "No message in update"
+
     forward_from_chat = message.get("forward_from_chat", {})
     forward_from_chat_id = forward_from_chat.get("id", None)
     forward_from_message_id = message.get("forward_from_message_id", None)
@@ -633,6 +675,18 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
                 reply_to_message_id=message["message_id"],
             )
         return 0, "Echo command exec success"
+
+    # /score*（动作/翻页/录入，仅管理员）
+    score_cmd = command_args[0].split("@")[0]
+    if score_cmd == "/score" or score_cmd.startswith("/score_"):
+        if str(message["from"]["id"]).strip() != str(os.getenv("tg_admin", "")).strip():
+            bot.send_message(
+                message["chat"]["id"],
+                "只有管理员可以使用 /score 命令。",
+                reply_to_message_id=message["message_id"],
+            )
+            return 1, "Only administrators are allowed to use /score commands."
+        return handle_score_command(message, bot, command_args)
     if command_args[0].startswith("/askgptclear"):
         r.delete(redis_key(f'{message["from"]["id"]}_context'))
     elif command_args[0].startswith("/askgpt"):
