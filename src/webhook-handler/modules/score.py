@@ -786,34 +786,8 @@ def build_summary_text(doc: dict, page: int = 1, toast: str = "") -> str:
         for x in deltas[-8:]:
             lines.append(f"· {x.get('src')}: {float(x.get('delta', 0)):+g}")
 
-    # 消息内快捷命令（参数单位/日期格式写清楚）
-    ds = date_str(today)
     lines.append("")
-    lines.append("—— 动作命令（无参数，按当前东八区时刻记）——")
-    lines.append("/score_wake 起床  /score_sleep 睡觉  /score_arrive 到岗  /score_leave 下班")
-    lines.append("/score_ot 加班+1  /score_diet 健康饮食切换")
-    lines.append("/score_plane_tool 飞机+(工具)  /score_plane_notool 飞机+  /score_plane_minus 飞机-")
-    lines.append("/score_med_plus 冥想+1分钟  /score_med_minus 冥想-1分钟")
-    lines.append("/score_duo_plus 多邻国+1分  /score_duo_minus 多邻国-1分")
-    lines.append("")
-    lines.append("—— 录入命令 ——")
-    lines.append("日期 date = yyyy-mm-dd（如 " + ds + "）；省略则=今天")
-    lines.append("月份 month = yyyy-mm（如 " + mk + "）；省略则=本月")
-    lines.append("sleeptime: 睡眠时长，单位=小时(h)，可用小数")
-    lines.append(f"/score sleeptime <小时h> [date]  例: /score sleeptime 7 {ds}")
-    lines.append("read/study/guitar/sport: 当日累计时长，单位=分钟(m)，整数或小数")
-    lines.append(f"/score readtime <分钟m> [date]  例: /score readtime 30 {ds}")
-    lines.append(f"/score studytime <分钟m> [date]  例: /score studytime 30 {ds}")
-    lines.append(f"/score guitartime <分钟m> [date]  例: /score guitartime 30 {ds}")
-    lines.append(f"/score sporttime <分钟m> [date]  例: /score sporttime 30 {ds}")
-    lines.append("cost: 当月花销，单位=人民币元(RMB)")
-    lines.append(f"/score cost <金额RMB> [month]  例: /score cost 3500 {mk}")
-    lines.append("reset: 将总分设为指定数值（可含小数），后跟备注文本")
-    lines.append("/score reset <分数> <备注>  例: /score reset 0 月初清零")
-    lines.append("")
-    lines.append("—— 面板 ——")
-    lines.append("/score 打开面板  /score_refresh 刷新")
-    lines.append("/score_page_1|_2|_3 翻到对应页（N=页码1-3）")
+    lines.append("帮助: /score help 或 /scorehelp")
 
     return "\n".join(lines)
 
@@ -857,37 +831,55 @@ def build_score_keyboard(page: int = 1):
     return kb
 
 
-SCORE_USAGE = (
-    "用法（时区=东八区）\n"
-    "\n"
-    "面板:\n"
-    "  /score — 打开积分面板\n"
-    "  /score_refresh — 刷新\n"
-    "  /score_page_<N> — 翻页，N=1|2|3\n"
-    "\n"
-    "动作（无参数，按点击时刻记录）:\n"
-    "  /score_wake 起床  /score_sleep 睡觉\n"
-    "  /score_arrive 到岗  /score_leave 下班\n"
-    "  /score_ot 加班+1分  /score_diet 健康饮食开/关\n"
-    "  /score_plane_tool 飞机+(带工具)\n"
-    "  /score_plane_notool 飞机+(无工具)\n"
-    "  /score_plane_minus 飞机-\n"
-    "  /score_med_plus|/score_med_minus 冥想 ±1 分钟\n"
-    "  /score_duo_plus|/score_duo_minus 多邻国 ±1 分\n"
-    "\n"
-    "录入（方括号=可选）:\n"
-    "  date 格式=yyyy-mm-dd（例 2026-07-15），省略=今天\n"
-    "  month 格式=yyyy-mm（例 2026-07），省略=本月\n"
-    "  /score sleeptime <小时h> [date]\n"
-    "      小时单位=小时，可用小数，例: /score sleeptime 7.5 2026-07-15\n"
-    "  /score readtime|studytime|guitartime|sporttime <分钟m> [date]\n"
-    "      分钟单位=分钟，例: /score readtime 30 2026-07-15\n"
-    "  /score cost <金额RMB> [month]\n"
-    "      金额单位=人民币元，例: /score cost 3500 2026-07\n"
-    "  /score reset <分数> <备注>\n"
-    "      分数=目标总分（可小数），备注=任意文本\n"
-    "      例: /score reset 0 月初清零"
-)
+def build_score_help() -> str:
+    """/score help 完整说明（含单位与日期格式）。"""
+    today = now_cn().date()
+    ds = date_str(today)
+    mk = month_key(today)
+    return (
+        "积分命令帮助（时区=东八区）\n"
+        "\n"
+        "—— 面板 ——\n"
+        "/score — 打开积分面板（Inline 按钮）\n"
+        "/score_refresh — 刷新面板\n"
+        "/score_page_<N> — 翻页，N=1|2|3\n"
+        "/score help 或 /scorehelp — 显示本帮助\n"
+        "\n"
+        "—— 动作（无参数，按点击/发送时刻记录）——\n"
+        "/score_wake 起床\n"
+        "/score_sleep 睡觉\n"
+        "/score_arrive 到岗\n"
+        "/score_leave 下班\n"
+        "/score_ot 加班 +1 分\n"
+        "/score_diet 健康饮食 开/关\n"
+        "/score_plane_tool 飞机+（带工具）\n"
+        "/score_plane_notool 飞机+（无工具）\n"
+        "/score_plane_minus 飞机-\n"
+        "/score_med_plus 冥想 +1 分钟\n"
+        "/score_med_minus 冥想 -1 分钟\n"
+        "/score_duo_plus 多邻国 +1 分\n"
+        "/score_duo_minus 多邻国 -1 分\n"
+        "\n"
+        "—— 录入（[] 内为可选）——\n"
+        f"date  格式=yyyy-mm-dd（例 {ds}），省略=今天\n"
+        f"month 格式=yyyy-mm（例 {mk}），省略=本月\n"
+        "\n"
+        "/score sleeptime <小时h> [date]\n"
+        f"  单位=小时(h)，可小数  例: /score sleeptime 7.5 {ds}\n"
+        "\n"
+        "/score readtime <分钟m> [date]\n"
+        "/score studytime <分钟m> [date]\n"
+        "/score guitartime <分钟m> [date]\n"
+        "/score sporttime <分钟m> [date]\n"
+        f"  单位=分钟(m)  例: /score readtime 30 {ds}\n"
+        "\n"
+        "/score cost <金额RMB> [month]\n"
+        f"  单位=人民币元  例: /score cost 3500 {mk}\n"
+        "\n"
+        "/score reset <分数> <备注>\n"
+        "  分数=目标总分（可小数），备注=任意文本\n"
+        "  例: /score reset 0 月初清零"
+    )
 
 
 def _send_score_message(bot, chat_id, text, message=None, reply_markup=None):
@@ -995,6 +987,10 @@ def handle_score_command(message: dict, bot, command_args: List[str]) -> Tuple[i
             _send_score_message(bot, chat_id, f"执行失败: {e}", message=message)
             return 1, f"score action error: {e}"
 
+    if cmd in ("/scorehelp", "/score_help"):
+        _send_score_message(bot, chat_id, build_score_help(), message=message)
+        return 0, "Score help sent"
+
     if cmd.startswith("/score_page"):
         try:
             page = int(cmd.split("_")[-1])
@@ -1035,44 +1031,48 @@ def handle_score_command(message: dict, bot, command_args: List[str]) -> Tuple[i
         return 0, "Score panel sent"
 
     sub = command_args[1].lower()
+    if sub in ("help", "h", "?"):
+        _send_score_message(bot, chat_id, build_score_help(), message=message)
+        return 0, "Score help sent"
+
     try:
         if sub == "sleeptime":
             if len(command_args) < 3:
-                _send_score_message(bot, chat_id, SCORE_USAGE, message=message)
+                _send_score_message(bot, chat_id, build_score_help(), message=message)
                 return 1, "usage"
             hours = float(command_args[2])
             d = command_args[3] if len(command_args) > 3 else None
             doc, toast = apply_action(user_id, "sleeptime", value=hours, target_date=d)
         elif sub in ("readtime", "studytime", "guitartime", "sporttime"):
             if len(command_args) < 3:
-                _send_score_message(bot, chat_id, SCORE_USAGE, message=message)
+                _send_score_message(bot, chat_id, build_score_help(), message=message)
                 return 1, "usage"
             minutes = float(command_args[2])
             d = command_args[3] if len(command_args) > 3 else None
             doc, toast = apply_action(user_id, sub, value=minutes, target_date=d)
         elif sub == "cost":
             if len(command_args) < 3:
-                _send_score_message(bot, chat_id, SCORE_USAGE, message=message)
+                _send_score_message(bot, chat_id, build_score_help(), message=message)
                 return 1, "usage"
             rmb = float(command_args[2])
             mk = command_args[3] if len(command_args) > 3 else None
             doc, toast = apply_action(user_id, "cost", value=rmb, target_date=mk)
         elif sub == "reset":
             if len(command_args) < 3:
-                _send_score_message(bot, chat_id, SCORE_USAGE, message=message)
+                _send_score_message(bot, chat_id, build_score_help(), message=message)
                 return 1, "usage"
             score_val = float(command_args[2])
             note = " ".join(command_args[3:]) if len(command_args) > 3 else ""
             doc, toast = apply_action(user_id, "reset", value=score_val, note=note)
         else:
-            _send_score_message(bot, chat_id, SCORE_USAGE, message=message)
+            _send_score_message(bot, chat_id, build_score_help(), message=message)
             return 1, "unknown subcommand"
 
         _reply_panel(bot, message, doc, _get_ui_page(doc), toast=toast)
         return 0, f"Score {sub} ok"
     except Exception as e:
         _send_score_message(
-            bot, chat_id, f"执行失败: {e}\n\n{SCORE_USAGE}", message=message
+            bot, chat_id, f"执行失败: {e}\n\n{build_score_help()}", message=message
         )
         return 1, f"score error: {e}"
 

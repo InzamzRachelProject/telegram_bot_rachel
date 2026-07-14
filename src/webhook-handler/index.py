@@ -678,7 +678,11 @@ def command_handler(message: dict, bot: telebot.TeleBot) -> Tuple[int, str]:
 
     # /score*（动作/翻页/录入，仅管理员）
     score_cmd = command_args[0].split("@")[0]
-    if score_cmd == "/score" or score_cmd.startswith("/score_"):
+    if (
+        score_cmd == "/score"
+        or score_cmd == "/scorehelp"
+        or score_cmd.startswith("/score_")
+    ):
         if str(message["from"]["id"]).strip() != str(os.getenv("tg_admin", "")).strip():
             bot.send_message(
                 message["chat"]["id"],
